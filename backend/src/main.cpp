@@ -203,28 +203,24 @@ int main() {
                     {"accountNumber", "100020003000"},
                     {"name", "Aditya Sharma"},
                     {"tier", "Platinum VIP"},
-                    {"pin", "123456"},
                     {"balance", 75000.0}
                 },
                 {
                     {"accountNumber", "100020004000"},
                     {"name", "Priya Patel"},
                     {"tier", "Gold Premium"},
-                    {"pin", "654321"},
                     {"balance", 42500.0}
                 },
                 {
                     {"accountNumber", "100020005000"},
                     {"name", "Rahul Verma"},
                     {"tier", "Business Executive"},
-                    {"pin", "112233"},
                     {"balance", 150000.0}
                 },
                 {
                     {"accountNumber", "100020006000"},
                     {"name", "Simran Kaur"},
                     {"tier", "Student Advantage"},
-                    {"pin", "998877"},
                     {"balance", 18000.0}
                 }
             }}
