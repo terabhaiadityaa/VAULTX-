@@ -246,8 +246,8 @@ body {
    Auth Section & Simulation Demo Cards
    ========================================================================== */
 .auth-wrapper {
-  max-width: 580px;
-  margin: 30px auto;
+  max-width: 480px;
+  margin: 40px auto;
   background: var(--white);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-xl);
@@ -258,7 +258,7 @@ body {
 .auth-header-hero {
   background: linear-gradient(135deg, var(--primary-900) 0%, var(--primary-700) 100%);
   color: var(--white);
-  padding: 32px 32px 24px;
+  padding: 36px 32px 28px;
   text-align: center;
   position: relative;
 }
@@ -302,131 +302,7 @@ body {
 }
 
 .auth-body {
-  padding: 24px 28px 32px;
-}
-
-/* Demo Simulation Cards Selector */
-.demo-cards-section {
-  margin-bottom: 24px;
-}
-
-.demo-cards-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.demo-cards-header span {
-  font-size: 0.8rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--slate-500);
-}
-
-.demo-cards-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.demo-card-item {
-  background: #f8fafc;
-  border: 1px solid var(--slate-200);
-  border-radius: var(--radius-md);
-  padding: 12px 14px;
-  cursor: pointer;
-  text-align: left;
-  transition: all var(--transition-fast);
-  position: relative;
-}
-
-.demo-card-item:hover {
-  background: var(--white);
-  border-color: var(--accent-blue);
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.12);
-  transform: translateY(-2px);
-}
-
-.demo-card-item.selected {
-  background: #eff6ff;
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 0 2px var(--accent-blue);
-}
-
-.demo-card-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 6px;
-}
-
-.demo-card-name {
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--slate-900);
-}
-
-.demo-card-tier {
-  font-size: 0.65rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-  background: #dbeafe;
-  color: #1e40af;
-}
-
-.demo-card-number {
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  letter-spacing: 0.08em;
-  color: var(--slate-600);
-  margin-bottom: 6px;
-}
-
-.demo-card-bottom {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 0.75rem;
-  color: var(--slate-500);
-}
-
-.demo-card-balance {
-  font-weight: 700;
-  color: var(--emerald-600);
-}
-
-.demo-card-pin {
-  font-family: var(--font-mono);
-  background: var(--slate-200);
-  padding: 1px 5px;
-  border-radius: 4px;
-  color: var(--slate-800);
-}
-
-.form-divider {
-  display: flex;
-  align-items: center;
-  margin: 20px 0;
-  color: var(--slate-400);
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.form-divider::before,
-.form-divider::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--slate-200);
-}
-
-.form-divider span {
-  padding: 0 12px;
+  padding: 28px 32px 36px;
 }
 
 .form-group {
@@ -1200,10 +1076,6 @@ body {
    ========================================================================== */
 @media (max-width: 860px) {
   .dashboard-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .demo-cards-grid {
     grid-template-columns: 1fr;
   }
   

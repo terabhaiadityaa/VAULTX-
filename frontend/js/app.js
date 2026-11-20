@@ -167,27 +167,7 @@ function attachCardNumberFormatter(input) {
 attachCardNumberFormatter(loginIdentifier);
 attachCardNumberFormatter(transferTargetInput);
 
-// ==========================================================================
-// Demo Cards Quick-Select
-// ==========================================================================
 
-function initDemoCards() {
-  document.querySelectorAll('.demo-card-item').forEach(card => {
-    card.addEventListener('click', () => {
-      document.querySelectorAll('.demo-card-item').forEach(c => c.classList.remove('selected'));
-      card.classList.add('selected');
-
-      const acc = card.getAttribute('data-acc');
-      const pin = card.getAttribute('data-pin');
-
-      loginIdentifier.value = formatCardDisplay(acc);
-      loginPin.value = pin;
-
-      showToast(`Selected demo card: ${card.querySelector('.demo-card-name').textContent}`, 'info', 2000);
-      loginSubmitBtn.focus();
-    });
-  });
-}
 
 // ==========================================================================
 // Authentication & Session
@@ -833,6 +813,5 @@ printReceiptBtn.addEventListener('click', () => {
 
 // Initialize on DOM load
 document.addEventListener('DOMContentLoaded', () => {
-  initDemoCards();
   checkExistingSession();
 });
