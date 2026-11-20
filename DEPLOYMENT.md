@@ -8,7 +8,7 @@ This guide describes how to deploy the NOIR ATM Simulation Platform online.
 
 The application is currently live and operational online:
 
-- **Live Public URL:** [https://a148950243db44.app.lhr.life](https://a148950243db44.app.lhr.life)
+- **Live Public URL:** [https://74a3fad75c4acd.app.lhr.life](https://74a3fad75c4acd.app.lhr.life)
 - **Local URL:** `http://localhost:8080`
 - **Health Check Endpoint:** `https://a148950243db44.app.lhr.life/api/health`
 
