@@ -9,7 +9,7 @@
 
 ## 🌐 Live Website
 
-- **Public HTTPS URL:** [https://74a3fad75c4acd.app.lhr.life](https://74a3fad75c4acd.app.lhr.life)
+- **Public HTTPS URL:** [https://d8e5c07318c2267b-106-222-218-80.serveousercontent.com](https://d8e5c07318c2267b-106-222-218-80.serveousercontent.com)
 - **Local Server:** `http://localhost:8080`
 
 ---
