@@ -175,7 +175,7 @@ AuthResult AuthService::registerUser(
         const char* accountSQL =
             "INSERT INTO accounts "
             "(user_id, account_number, balance_paise) "
-            "VALUES (?, ?, 0);";
+            "VALUES (?, ?, 1000000);";
 
         if (sqlite3_prepare_v2(
                 db,
@@ -217,6 +217,17 @@ AuthResult AuthService::registerUser(
             }
 
             return {false, "Account creation failed.", -1, ""};
+        }
+
+        int accountId = static_cast<int>(sqlite3_last_insert_rowid(db));
+        sqlite3_stmt* welcomeTx = nullptr;
+        const char* welcomeTxSql =
+            "INSERT INTO transactions (account_id, transaction_type, amount_paise, description) "
+            "VALUES (?, 'deposit', 1000000, 'Welcome simulation balance');";
+        if (sqlite3_prepare_v2(db, welcomeTxSql, -1, &welcomeTx, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int(welcomeTx, 1, accountId);
+            sqlite3_step(welcomeTx);
+            sqlite3_finalize(welcomeTx);
         }
 
         if (sqlite3_exec(

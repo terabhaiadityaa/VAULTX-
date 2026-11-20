@@ -245,3 +245,234 @@ TransferResult Database::transferFunds(
     return {true, false, "Transfer completed successfully.",
             sender.balance - amountPaise};
 }
+
+AccountDetails Database::getAccountDetailsForUser(int userId) {
+    AccountDetails details;
+    if (userId <= 0) return details;
+    std::lock_guard<std::mutex> lock(dbMutex);
+    if (!db) return details;
+
+    sqlite3_stmt* stmt = nullptr;
+    const char* sql =
+        "SELECT u.id, u.full_name, u.email, a.id, a.account_number, a.balance_paise, a.status, a.created_at "
+        "FROM users u "
+        "JOIN accounts a ON u.id = a.user_id "
+        "WHERE u.id = ? AND a.status = 'active' LIMIT 1;";
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+        return details;
+
+    sqlite3_bind_int(stmt, 1, userId);
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        details.found = true;
+        details.userId = sqlite3_column_int(stmt, 0);
+        const auto* fn = sqlite3_column_text(stmt, 1);
+        details.fullName = fn ? reinterpret_cast<const char*>(fn) : "";
+        const auto* em = sqlite3_column_text(stmt, 2);
+        details.email = em ? reinterpret_cast<const char*>(em) : "";
+        details.accountId = sqlite3_column_int64(stmt, 3);
+        const auto* an = sqlite3_column_text(stmt, 4);
+        details.accountNumber = an ? reinterpret_cast<const char*>(an) : "";
+        details.balancePaise = sqlite3_column_int64(stmt, 5);
+        const auto* st = sqlite3_column_text(stmt, 6);
+        details.status = st ? reinterpret_cast<const char*>(st) : "";
+        const auto* ca = sqlite3_column_text(stmt, 7);
+        details.createdAt = ca ? reinterpret_cast<const char*>(ca) : "";
+    }
+    sqlite3_finalize(stmt);
+    return details;
+}
+
+OperationResult Database::depositFunds(const std::string& accountNumber, std::int64_t amountPaise) {
+    if (accountNumber.empty())
+        return {false, true, "Account number is required.", 0};
+    if (amountPaise <= 0)
+        return {false, true, "Deposit amount must be greater than zero.", 0};
+
+    std::lock_guard<std::mutex> lock(dbMutex);
+    if (!db) return {false, false, "Database is not connected.", 0};
+
+    if (!executeSql(db, "BEGIN IMMEDIATE TRANSACTION;"))
+        return {false, false, "Could not start deposit transaction.", 0};
+
+    auto fail = [this](const std::string& message, bool clientError, std::int64_t balance = 0) {
+        rollback(db);
+        return OperationResult{false, clientError, message, balance};
+    };
+
+    sqlite3_stmt* selectStmt = nullptr;
+    const char* selectSql = "SELECT id, balance_paise, status FROM accounts WHERE account_number = ?;";
+    if (sqlite3_prepare_v2(db, selectSql, -1, &selectStmt, nullptr) != SQLITE_OK)
+        return fail("Could not query account.", false);
+
+    sqlite3_bind_text(selectStmt, 1, accountNumber.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_int64 accountId = 0;
+    std::int64_t currentBalance = 0;
+    std::string status;
+    bool exists = false;
+    if (sqlite3_step(selectStmt) == SQLITE_ROW) {
+        exists = true;
+        accountId = sqlite3_column_int64(selectStmt, 0);
+        currentBalance = sqlite3_column_int64(selectStmt, 1);
+        const auto* st = sqlite3_column_text(selectStmt, 2);
+        status = st ? reinterpret_cast<const char*>(st) : "";
+    }
+    sqlite3_finalize(selectStmt);
+
+    if (!exists) return fail("Account not found.", true);
+    if (status != "active") return fail("Account is not active.", true, currentBalance);
+    if (currentBalance > std::numeric_limits<std::int64_t>::max() - amountPaise)
+        return fail("Balance limit would be exceeded.", true, currentBalance);
+
+    sqlite3_stmt* updateStmt = nullptr;
+    const char* updateSql = "UPDATE accounts SET balance_paise = balance_paise + ? WHERE id = ? AND status = 'active';";
+    if (sqlite3_prepare_v2(db, updateSql, -1, &updateStmt, nullptr) != SQLITE_OK)
+        return fail("Could not prepare deposit update.", false, currentBalance);
+
+    sqlite3_bind_int64(updateStmt, 1, amountPaise);
+    sqlite3_bind_int64(updateStmt, 2, accountId);
+    int step = sqlite3_step(updateStmt);
+    const int changed = sqlite3_changes(db);
+    sqlite3_finalize(updateStmt);
+    if (step != SQLITE_DONE || changed != 1)
+        return fail("Deposit could not be applied.", false, currentBalance);
+
+    sqlite3_stmt* txStmt = nullptr;
+    const char* txSql = "INSERT INTO transactions (account_id, transaction_type, amount_paise, description) VALUES (?, 'deposit', ?, 'Cash deposit');";
+    if (sqlite3_prepare_v2(db, txSql, -1, &txStmt, nullptr) != SQLITE_OK)
+        return fail("Could not prepare transaction log.", false, currentBalance);
+
+    sqlite3_bind_int64(txStmt, 1, accountId);
+    sqlite3_bind_int64(txStmt, 2, amountPaise);
+    int txStep = sqlite3_step(txStmt);
+    sqlite3_finalize(txStmt);
+    if (txStep != SQLITE_DONE)
+        return fail("Could not log deposit transaction.", false, currentBalance);
+
+    if (!executeSql(db, "COMMIT;"))
+        return fail("Could not commit deposit transaction.", false, currentBalance);
+
+    return {true, false, "Cash deposit completed successfully.", currentBalance + amountPaise};
+}
+
+OperationResult Database::withdrawFunds(const std::string& accountNumber, std::int64_t amountPaise) {
+    if (accountNumber.empty())
+        return {false, true, "Account number is required.", 0};
+    if (amountPaise <= 0)
+        return {false, true, "Withdrawal amount must be greater than zero.", 0};
+
+    std::lock_guard<std::mutex> lock(dbMutex);
+    if (!db) return {false, false, "Database is not connected.", 0};
+
+    if (!executeSql(db, "BEGIN IMMEDIATE TRANSACTION;"))
+        return {false, false, "Could not start withdrawal transaction.", 0};
+
+    auto fail = [this](const std::string& message, bool clientError, std::int64_t balance = 0) {
+        rollback(db);
+        return OperationResult{false, clientError, message, balance};
+    };
+
+    sqlite3_stmt* selectStmt = nullptr;
+    const char* selectSql = "SELECT id, balance_paise, status FROM accounts WHERE account_number = ?;";
+    if (sqlite3_prepare_v2(db, selectSql, -1, &selectStmt, nullptr) != SQLITE_OK)
+        return fail("Could not query account.", false);
+
+    sqlite3_bind_text(selectStmt, 1, accountNumber.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_int64 accountId = 0;
+    std::int64_t currentBalance = 0;
+    std::string status;
+    bool exists = false;
+    if (sqlite3_step(selectStmt) == SQLITE_ROW) {
+        exists = true;
+        accountId = sqlite3_column_int64(selectStmt, 0);
+        currentBalance = sqlite3_column_int64(selectStmt, 1);
+        const auto* st = sqlite3_column_text(selectStmt, 2);
+        status = st ? reinterpret_cast<const char*>(st) : "";
+    }
+    sqlite3_finalize(selectStmt);
+
+    if (!exists) return fail("Account not found.", true);
+    if (status != "active") return fail("Account is not active.", true, currentBalance);
+    if (currentBalance < amountPaise)
+        return fail("Insufficient funds for withdrawal.", true, currentBalance);
+
+    sqlite3_stmt* updateStmt = nullptr;
+    const char* updateSql = "UPDATE accounts SET balance_paise = balance_paise - ? WHERE id = ? AND status = 'active' AND balance_paise >= ?;";
+    if (sqlite3_prepare_v2(db, updateSql, -1, &updateStmt, nullptr) != SQLITE_OK)
+        return fail("Could not prepare withdrawal update.", false, currentBalance);
+
+    sqlite3_bind_int64(updateStmt, 1, amountPaise);
+    sqlite3_bind_int64(updateStmt, 2, accountId);
+    sqlite3_bind_int64(updateStmt, 3, amountPaise);
+    int step = sqlite3_step(updateStmt);
+    const int changed = sqlite3_changes(db);
+    sqlite3_finalize(updateStmt);
+    if (step != SQLITE_DONE || changed != 1)
+        return fail("Withdrawal failed; insufficient balance or concurrent modification.", true, currentBalance);
+
+    sqlite3_stmt* txStmt = nullptr;
+    const char* txSql = "INSERT INTO transactions (account_id, transaction_type, amount_paise, description) VALUES (?, 'withdrawal', ?, 'Cash withdrawal');";
+    if (sqlite3_prepare_v2(db, txSql, -1, &txStmt, nullptr) != SQLITE_OK)
+        return fail("Could not prepare transaction log.", false, currentBalance);
+
+    sqlite3_bind_int64(txStmt, 1, accountId);
+    sqlite3_bind_int64(txStmt, 2, amountPaise);
+    int txStep = sqlite3_step(txStmt);
+    sqlite3_finalize(txStmt);
+    if (txStep != SQLITE_DONE)
+        return fail("Could not log withdrawal transaction.", false, currentBalance);
+
+    if (!executeSql(db, "COMMIT;"))
+        return fail("Could not commit withdrawal transaction.", false, currentBalance);
+
+    return {true, false, "Cash withdrawal completed successfully.", currentBalance - amountPaise};
+}
+
+std::vector<TransactionItem> Database::getTransactionHistory(sqlite3_int64 accountId, int limit) {
+    std::vector<TransactionItem> items;
+    if (accountId <= 0) return items;
+    if (limit <= 0) limit = 50;
+
+    std::lock_guard<std::mutex> lock(dbMutex);
+    if (!db) return items;
+
+    sqlite3_stmt* stmt = nullptr;
+    const char* sql =
+        "SELECT t.id, t.transaction_type, t.amount_paise, t.description, t.created_at, "
+        "       rel.account_number "
+        "FROM transactions t "
+        "LEFT JOIN accounts rel ON t.related_account_id = rel.id "
+        "WHERE t.account_id = ? "
+        "ORDER BY t.created_at DESC, t.id DESC "
+        "LIMIT ?;";
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+        return items;
+
+    sqlite3_bind_int64(stmt, 1, accountId);
+    sqlite3_bind_int(stmt, 2, limit);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        TransactionItem item;
+        item.id = sqlite3_column_int64(stmt, 0);
+        const auto* ty = sqlite3_column_text(stmt, 1);
+        item.type = ty ? reinterpret_cast<const char*>(ty) : "";
+        item.amountPaise = sqlite3_column_int64(stmt, 2);
+        const auto* desc = sqlite3_column_text(stmt, 3);
+        item.description = desc ? reinterpret_cast<const char*>(desc) : "";
+        const auto* ca = sqlite3_column_text(stmt, 4);
+        item.createdAt = ca ? reinterpret_cast<const char*>(ca) : "";
+        const auto* rel = sqlite3_column_text(stmt, 5);
+        item.relatedAccount = rel ? reinterpret_cast<const char*>(rel) : "";
+
+        if (item.type == "deposit" || item.type == "transfer_in") {
+            item.direction = "credit";
+        } else {
+            item.direction = "debit";
+        }
+
+        items.push_back(item);
+    }
+    sqlite3_finalize(stmt);
+    return items;
+}

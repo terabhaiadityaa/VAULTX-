@@ -14,12 +14,16 @@ target_include_directories(atm_backend
     PRIVATE
     include
     external/httplib
+    external
 )
 
 target_link_libraries(atm_backend
     PRIVATE
     SQLite3::SQLite3
     OpenSSL::Crypto
-    ws2_32
 )
+
+if(WIN32)
+    target_link_libraries(atm_backend PRIVATE ws2_32)
+endif()
 

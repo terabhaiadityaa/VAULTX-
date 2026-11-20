@@ -1,10 +1,11 @@
-
 #include <iostream>
 #include <cmath>
 #include <limits>
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
@@ -14,16 +15,46 @@
 
 using json = nlohmann::json;
 
-int main() {
-    Database database;
+namespace {
 
-    if (!database.connect("database/atm.db")) {
-        std::cerr << "Could not connect to ATM database." << std::endl;
+std::string extractBearerToken(const httplib::Request& req) {
+    std::string token = req.get_header_value("Authorization");
+    const std::string prefix = "Bearer ";
+    if (token.rfind(prefix, 0) == 0) {
+        return token.substr(prefix.length());
+    }
+    return "";
+}
+
+void sendJson(httplib::Response& res, int status, const json& body) {
+    res.status = status;
+    res.set_header("Content-Type", "application/json");
+    res.set_header("Access-Control-Allow-Origin", "*");
+    res.set_header("Cache-Control", "no-store");
+    res.set_content(body.dump(4), "application/json");
+}
+
+} // namespace
+
+int main() {
+    // Determine database path from environment or default
+    const char* envDbPath = std::getenv("DATABASE_PATH");
+    std::string dbPath = envDbPath ? envDbPath : "database/atm.db";
+
+    Database database;
+    if (!database.connect(dbPath)) {
+        std::cerr << "Could not connect to ATM database at: " << dbPath << std::endl;
         return 1;
     }
 
-    if (!database.initializeSchema("database/schema.sql")) {
-        std::cerr << "Database initialization failed." << std::endl;
+    // Determine schema path
+    std::string schemaPath = "database/schema.sql";
+    if (!std::filesystem::exists(schemaPath) && std::filesystem::exists("../database/schema.sql")) {
+        schemaPath = "../database/schema.sql";
+    }
+
+    if (!database.initializeSchema(schemaPath)) {
+        std::cerr << "Database initialization failed with schema: " << schemaPath << std::endl;
         return 1;
     }
 
@@ -32,35 +63,60 @@ int main() {
 
     httplib::Server server;
 
+    // Global CORS preflight & headers
+    server.set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
+        if (req.method == "OPTIONS") {
+            res.status = 204;
+            res.set_header("Access-Control-Allow-Origin", "*");
+            res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+            res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+            res.set_header("Access-Control-Max-Age", "86400");
+            return httplib::Server::HandlerResponse::Handled;
+        }
+        return httplib::Server::HandlerResponse::Unhandled;
+    });
+
+    server.set_post_routing_handler([](const httplib::Request&, httplib::Response& res) {
+        res.set_header("Access-Control-Allow-Origin", "*");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    });
+
+    // Mount static frontend directory
+    std::string frontendDir = "./frontend";
+    if (const char* envFrontend = std::getenv("FRONTEND_DIR")) {
+        frontendDir = envFrontend;
+    } else if (!std::filesystem::exists(frontendDir) && std::filesystem::exists("../frontend")) {
+        frontendDir = "../frontend";
+    }
+
+    if (std::filesystem::exists(frontendDir)) {
+        server.set_mount_point("/", frontendDir);
+        std::cout << "[INFO] Serving static frontend from: " << frontendDir << std::endl;
+    } else {
+        std::cerr << "[WARN] Frontend directory not found at: " << frontendDir << std::endl;
+    }
+
     // Health check
-    server.Get("/api/health",
-        [](const httplib::Request& req, httplib::Response& res) {
-
-        json response = {
+    server.Get("/api/health", [](const httplib::Request&, httplib::Response& res) {
+        sendJson(res, 200, {
             {"status", "success"},
-            {"message", "ATM Backend is running"},
-            {"language", "C++17"}
-        };
-
-        res.set_content(response.dump(4), "application/json");
+            {"message", "ATM Simulation Platform Backend is operational"},
+            {"language", "C++17"},
+            {"simulation", true},
+            {"currency", "INR"}
+        });
     });
 
     // Database health check
-    server.Get("/api/health/db",
-        [](const httplib::Request& req, httplib::Response& res) {
-
-        json response = {
+    server.Get("/api/health/db", [](const httplib::Request&, httplib::Response& res) {
+        sendJson(res, 200, {
             {"status", "success"},
             {"message", "SQLite database is connected and initialized"}
-        };
-
-        res.set_content(response.dump(4), "application/json");
+        });
     });
 
     // User registration
-    server.Post("/api/auth/register",
-        [&authService](const httplib::Request& req, httplib::Response& res) {
-
+    server.Post("/api/auth/register", [&authService](const httplib::Request& req, httplib::Response& res) {
         try {
             json request = json::parse(req.body);
 
@@ -70,17 +126,10 @@ int main() {
                 !request["fullName"].is_string() ||
                 !request["email"].is_string() ||
                 !request["pin"].is_string()) {
-
-                res.status = 400;
-
-                res.set_content(
-                    json({
-                        {"status", "error"},
-                        {"message", "Full name, email and PIN are required."}
-                    }).dump(4),
-                    "application/json"
-                );
-
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "Full name, email, and 6-digit PIN are required."}
+                });
                 return;
             }
 
@@ -90,44 +139,31 @@ int main() {
                 request["pin"].get<std::string>()
             );
 
-            json response = {
-                {"status", result.success ? "success" : "error"},
-                {"message", result.message}
-            };
-
             if (result.success) {
-                res.status = 201;
-                response["userId"] = result.userId;
-                response["accountNumber"] = result.accountNumber;
+                sendJson(res, 201, {
+                    {"status", "success"},
+                    {"message", result.message},
+                    {"userId", result.userId},
+                    {"accountNumber", result.accountNumber},
+                    {"initialBalance", 10000.0}
+                });
             } else {
-                res.status = (
-                    result.message == "This email is already registered."
-                    ? 409 : 400
-                );
-            }
-
-            res.set_content(response.dump(4), "application/json");
-        }
-        catch (const json::exception&) {
-            res.status = 400;
-
-            res.set_content(
-                json({
+                int code = (result.message == "This email is already registered.") ? 409 : 400;
+                sendJson(res, code, {
                     {"status", "error"},
-                    {"message", "Invalid JSON request."}
-                }).dump(4),
-                "application/json"
-            );
+                    {"message", result.message}
+                });
+            }
+        } catch (const json::exception&) {
+            sendJson(res, 400, {
+                {"status", "error"},
+                {"message", "Invalid JSON request format."}
+            });
         }
     });
 
-    // User login with session creation
-    server.Post("/api/auth/login",
-        [&authService, &sessionManager](
-            const httplib::Request& req,
-            httplib::Response& res
-        ) {
-
+    // User login
+    server.Post("/api/auth/login", [&authService, &sessionManager, &database](const httplib::Request& req, httplib::Response& res) {
         try {
             json request = json::parse(req.body);
 
@@ -135,313 +171,498 @@ int main() {
                 !request.contains("pin") ||
                 !request["email"].is_string() ||
                 !request["pin"].is_string()) {
-
-                res.status = 400;
-
-                res.set_content(
-                    json({
-                        {"status", "error"},
-                        {"message", "Email and PIN are required."}
-                    }).dump(4),
-                    "application/json"
-                );
-
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "Email/Account Number and PIN are required."}
+                });
                 return;
             }
 
-            AuthResult result = authService.loginUser(
-                request["email"].get<std::string>(),
-                request["pin"].get<std::string>()
-            );
+            std::string identifier = request["email"].get<std::string>();
+            std::string pin = request["pin"].get<std::string>();
 
+            AuthResult result = authService.loginUser(identifier, pin);
             if (!result.success) {
-                res.status = 401;
-
-                res.set_content(
-                    json({
-                        {"status", "error"},
-                        {"message", result.message}
-                    }).dump(4),
-                    "application/json"
-                );
-
+                sendJson(res, 401, {
+                    {"status", "error"},
+                    {"message", result.message}
+                });
                 return;
             }
 
-            // Generate a session token after successful login.
-            std::string token =
-                sessionManager.createSession(result.userId);
-
+            std::string token = sessionManager.createSession(result.userId);
             if (token.empty()) {
-                res.status = 500;
-
-                res.set_content(
-                    json({
-                        {"status", "error"},
-                        {"message", "Could not create login session."}
-                    }).dump(4),
-                    "application/json"
-                );
-
+                sendJson(res, 500, {
+                    {"status", "error"},
+                    {"message", "Could not establish secure login session."}
+                });
                 return;
             }
 
-            json response = {
+            AccountDetails acc = database.getAccountDetailsForUser(result.userId);
+
+            sendJson(res, 200, {
                 {"status", "success"},
                 {"message", "Login successful."},
                 {"userId", result.userId},
+                {"fullName", acc.fullName},
+                {"email", acc.email},
                 {"accountNumber", result.accountNumber},
+                {"balancePaise", acc.balancePaise},
+                {"balance", static_cast<double>(acc.balancePaise) / 100.0},
                 {"sessionToken", token},
                 {"expiresInSeconds", 900}
-            };
-
-            res.status = 200;
-
-            res.set_content(
-                response.dump(4),
-                "application/json"
-            );
-        }
-        catch (const json::exception&) {
-            res.status = 400;
-
-            res.set_content(
-                json({
-                    {"status", "error"},
-                    {"message", "Invalid JSON request."}
-                }).dump(4),
-                "application/json"
-            );
+            });
+        } catch (const json::exception&) {
+            sendJson(res, 400, {
+                {"status", "error"},
+                {"message", "Invalid JSON request format."}
+            });
         }
     });
 
+    // User logout
+    server.Post("/api/auth/logout", [&sessionManager](const httplib::Request& req, httplib::Response& res) {
+        std::string token = extractBearerToken(req);
+        if (token.empty() || !sessionManager.invalidateSession(token)) {
+            sendJson(res, 401, {
+                {"status", "error"},
+                {"message", "Invalid or expired session."}
+            });
+            return;
+        }
 
-    // CORS preflight for a separately hosted development frontend (e.g. VS Code Live Server).
-    server.Options("/api/transfer",
-        [](const httplib::Request&, httplib::Response& res) {
-            res.status = 204;
-            res.set_header("Access-Control-Allow-Origin", "*");
-            res.set_header("Access-Control-Allow-Methods", "POST, OPTIONS");
-            res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-            res.set_header("Access-Control-Max-Age", "600");
+        sendJson(res, 200, {
+            {"status", "success"},
+            {"message", "Logged out successfully."}
         });
+    });
 
-    // Transfer funds. The authenticated session determines the sender account;
-    // the browser is never allowed to choose another user's sender account.
-    server.Post("/api/transfer",
-        [&database, &sessionManager](const httplib::Request& req,
-                                     httplib::Response& res) {
-            res.set_header("Access-Control-Allow-Origin", "*");
-            res.set_header("Cache-Control", "no-store");
+    // Session validation
+    server.Get("/api/auth/validate", [&sessionManager, &database](const httplib::Request& req, httplib::Response& res) {
+        std::string token = extractBearerToken(req);
+        int userId = -1;
 
-            auto sendJson = [&res](int status, const json& body) {
-                res.status = status;
-                res.set_content(body.dump(4), "application/json");
-            };
+        if (token.empty() || !sessionManager.validateSession(token, userId)) {
+            sendJson(res, 401, {
+                {"status", "error"},
+                {"message", "Invalid or expired session."}
+            });
+            return;
+        }
 
-            std::string token = req.get_header_value("Authorization");
-            const std::string prefix = "Bearer ";
-            if (token.rfind(prefix, 0) == 0) token = token.substr(prefix.size());
-            else token.clear();
+        AccountDetails acc = database.getAccountDetailsForUser(userId);
 
-            int userId = -1;
-            if (token.empty() || !sessionManager.validateSession(token, userId)) {
-                sendJson(401, {{"status", "error"},
-                               {"message", "Invalid or expired session."}});
+        sendJson(res, 200, {
+            {"status", "success"},
+            {"message", "Session is valid."},
+            {"userId", userId},
+            {"fullName", acc.fullName},
+            {"email", acc.email},
+            {"accountNumber", acc.accountNumber},
+            {"balancePaise", acc.balancePaise},
+            {"balance", static_cast<double>(acc.balancePaise) / 100.0}
+        });
+    });
+
+    // Account details and balance inquiry
+    server.Get("/api/account", [&sessionManager, &database](const httplib::Request& req, httplib::Response& res) {
+        std::string token = extractBearerToken(req);
+        int userId = -1;
+
+        if (token.empty() || !sessionManager.validateSession(token, userId)) {
+            sendJson(res, 401, {
+                {"status", "error"},
+                {"message", "Invalid or expired session. Please login again."}
+            });
+            return;
+        }
+
+        AccountDetails acc = database.getAccountDetailsForUser(userId);
+        if (!acc.found) {
+            sendJson(res, 404, {
+                {"status", "error"},
+                {"message", "Active account not found for this user."}
+            });
+            return;
+        }
+
+        sendJson(res, 200, {
+            {"status", "success"},
+            {"user", {
+                {"userId", acc.userId},
+                {"fullName", acc.fullName},
+                {"email", acc.email}
+            }},
+            {"account", {
+                {"accountId", acc.accountId},
+                {"accountNumber", acc.accountNumber},
+                {"balancePaise", acc.balancePaise},
+                {"balance", static_cast<double>(acc.balancePaise) / 100.0},
+                {"status", acc.status}
+            }}
+        });
+    });
+
+    // Cash Deposit
+    server.Post("/api/deposit", [&sessionManager, &database](const httplib::Request& req, httplib::Response& res) {
+        std::string token = extractBearerToken(req);
+        int userId = -1;
+
+        if (token.empty() || !sessionManager.validateSession(token, userId)) {
+            sendJson(res, 401, {
+                {"status", "error"},
+                {"message", "Invalid or expired session."}
+            });
+            return;
+        }
+
+        try {
+            json request = json::parse(req.body);
+            if (!request.is_object() || !request.contains("amount") || !request["amount"].is_number()) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "Deposit amount is required and must be a number."}
+                });
                 return;
             }
 
-            try {
-                const json request = json::parse(req.body);
-                if (!request.is_object() ||
-                    !request.contains("targetAccount") ||
-                    !request["targetAccount"].is_string() ||
-                    !request.contains("amount") ||
-                    !(request["amount"].is_number())) {
-                    sendJson(400, {{"status", "error"},
-                                   {"message", "Target account and numeric amount are required."}});
-                    return;
-                }
-
-                const std::string targetAccount =
-                    request["targetAccount"].get<std::string>();
-                const long double amountRupees =
-                    request["amount"].get<long double>();
-
-                if (targetAccount.empty() || targetAccount.size() > 32 ||
-                    !std::all_of(targetAccount.begin(), targetAccount.end(),
-                        [](unsigned char c) { return std::isdigit(c); })) {
-                    sendJson(400, {{"status", "error"},
-                                   {"message", "Enter a valid target account number."}});
-                    return;
-                }
-                if (!std::isfinite(amountRupees) || amountRupees <= 0.0L ||
-                    amountRupees > static_cast<long double>(
-                        std::numeric_limits<std::int64_t>::max()) / 100.0L) {
-                    sendJson(400, {{"status", "error"},
-                                   {"message", "Amount must be a positive valid number."}});
-                    return;
-                }
-
-                const long double paiseValue = std::round(amountRupees * 100.0L);
-                if (std::fabs(paiseValue - amountRupees * 100.0L) > 0.000001L) {
-                    sendJson(400, {{"status", "error"},
-                                   {"message", "Amount cannot have more than two decimal places."}});
-                    return;
-                }
-                const auto amountPaise = static_cast<std::int64_t>(paiseValue);
-
-                const std::string senderAccount = database.getAccountNumberForUser(userId);
-                if (senderAccount.empty()) {
-                    sendJson(400, {{"status", "error"},
-                                   {"message", "No active sender account is available."}});
-                    return;
-                }
-                if (senderAccount == targetAccount) {
-                    sendJson(400, {{"status", "error"},
-                                   {"message", "You cannot transfer money to your own account."}});
-                    return;
-                }
-
-                const TransferResult result = database.transferFunds(
-                    senderAccount, targetAccount, amountPaise);
-                if (!result.success) {
-                    sendJson(result.clientError ? 400 : 500,
-                        {{"status", "error"}, {"message", result.message}});
-                    return;
-                }
-
-                sendJson(200, {
-                    {"status", "success"},
-                    {"message", result.message},
-                    {"senderAccount", senderAccount},
-                    {"targetAccount", targetAccount},
-                    {"transferredAmount", static_cast<double>(amountPaise) / 100.0},
-                    {"balancePaise", result.senderBalancePaise},
-                    {"balance", static_cast<double>(result.senderBalancePaise) / 100.0}
-                });
-            }
-            catch (const json::exception&) {
-                sendJson(400, {{"status", "error"},
-                               {"message", "Invalid JSON request."}});
-            }
-        });
-
-    // User logout
-    server.Post("/api/auth/logout",
-        [&sessionManager](
-            const httplib::Request& req,
-            httplib::Response& res
-        ) {
-
-        std::string token = req.get_header_value("Authorization");
-
-        const std::string prefix = "Bearer ";
-
-        if (token.rfind(prefix, 0) == 0) {
-            token = token.substr(prefix.length());
-        } else {
-            token.clear();
-        }
-
-        if (token.empty() ||
-            !sessionManager.invalidateSession(token)) {
-
-            res.status = 401;
-
-            res.set_content(
-                json({
+            long double amountRupees = request["amount"].get<long double>();
+            if (!std::isfinite(amountRupees) || amountRupees <= 0.0L || amountRupees > 1000000.0L) {
+                sendJson(res, 400, {
                     {"status", "error"},
-                    {"message", "Invalid or expired session."}
-                }).dump(4),
-                "application/json"
-            );
+                    {"message", "Deposit amount must be between ₹1 and ₹10,00,000."}
+                });
+                return;
+            }
 
-            return;
-        }
+            long double paiseValue = std::round(amountRupees * 100.0L);
+            if (std::fabs(paiseValue - amountRupees * 100.0L) > 0.000001L) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "Amount cannot have more than two decimal places."}
+                });
+                return;
+            }
+            std::int64_t amountPaise = static_cast<std::int64_t>(paiseValue);
 
-        res.status = 200;
+            std::string accountNumber = database.getAccountNumberForUser(userId);
+            if (accountNumber.empty()) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "No active account found for authenticated user."}
+                });
+                return;
+            }
 
-        res.set_content(
-            json({
+            OperationResult result = database.depositFunds(accountNumber, amountPaise);
+            if (!result.success) {
+                sendJson(res, result.clientError ? 400 : 500, {
+                    {"status", "error"},
+                    {"message", result.message}
+                });
+                return;
+            }
+
+            sendJson(res, 200, {
                 {"status", "success"},
-                {"message", "Logout successful."}
-            }).dump(4),
-            "application/json"
-        );
+                {"message", result.message},
+                {"accountNumber", accountNumber},
+                {"depositedAmount", static_cast<double>(amountPaise) / 100.0},
+                {"balancePaise", result.balancePaise},
+                {"balance", static_cast<double>(result.balancePaise) / 100.0}
+            });
+        } catch (const json::exception&) {
+            sendJson(res, 400, {
+                {"status", "error"},
+                {"message", "Invalid JSON request format."}
+            });
+        }
     });
 
-
-    // Validate an existing session
-    server.Get("/api/auth/validate",
-        [&sessionManager](
-            const httplib::Request& req,
-            httplib::Response& res
-        ) {
-
-        std::string token = req.get_header_value("Authorization");
-
-        const std::string prefix = "Bearer ";
-
-        if (token.rfind(prefix, 0) == 0) {
-            token = token.substr(prefix.length());
-        } else {
-            token.clear();
-        }
-
+    // Cash Withdrawal
+    server.Post("/api/withdraw", [&sessionManager, &database](const httplib::Request& req, httplib::Response& res) {
+        std::string token = extractBearerToken(req);
         int userId = -1;
 
-        if (token.empty() ||
-            !sessionManager.validateSession(token, userId)) {
-
-            res.status = 401;
-
-            res.set_content(
-                json({
-                    {"status", "error"},
-                    {"message", "Invalid or expired session."}
-                }).dump(4),
-                "application/json"
-            );
-
+        if (token.empty() || !sessionManager.validateSession(token, userId)) {
+            sendJson(res, 401, {
+                {"status", "error"},
+                {"message", "Invalid or expired session."}
+            });
             return;
         }
 
-        res.status = 200;
+        try {
+            json request = json::parse(req.body);
+            if (!request.is_object() || !request.contains("amount") || !request["amount"].is_number()) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "Withdrawal amount is required and must be a number."}
+                });
+                return;
+            }
 
-        res.set_content(
-            json({
+            long double amountRupees = request["amount"].get<long double>();
+            if (!std::isfinite(amountRupees) || amountRupees <= 0.0L || amountRupees > 50000.0L) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "ATM withdrawal amount must be between ₹100 and ₹50,000 per transaction."}
+                });
+                return;
+            }
+
+            long double paiseValue = std::round(amountRupees * 100.0L);
+            if (std::fabs(paiseValue - amountRupees * 100.0L) > 0.000001L) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "Withdrawal amount must be whole rupees in multiples of ₹100."}
+                });
+                return;
+            }
+            std::int64_t amountPaise = static_cast<std::int64_t>(paiseValue);
+
+            if (amountPaise % 10000 != 0) { // must be a multiple of 100 rupees (10000 paise)
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "ATM cash withdrawal must be in multiples of ₹100 notes."}
+                });
+                return;
+            }
+
+            std::string accountNumber = database.getAccountNumberForUser(userId);
+            if (accountNumber.empty()) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "No active account found for authenticated user."}
+                });
+                return;
+            }
+
+            OperationResult result = database.withdrawFunds(accountNumber, amountPaise);
+            if (!result.success) {
+                sendJson(res, result.clientError ? 400 : 500, {
+                    {"status", "error"},
+                    {"message", result.message}
+                });
+                return;
+            }
+
+            sendJson(res, 200, {
                 {"status", "success"},
-                {"message", "Session is valid."},
-                {"userId", userId}
-            }).dump(4),
-            "application/json"
-        );
+                {"message", result.message},
+                {"accountNumber", accountNumber},
+                {"withdrawnAmount", static_cast<double>(amountPaise) / 100.0},
+                {"balancePaise", result.balancePaise},
+                {"balance", static_cast<double>(result.balancePaise) / 100.0}
+            });
+        } catch (const json::exception&) {
+            sendJson(res, 400, {
+                {"status", "error"},
+                {"message", "Invalid JSON request format."}
+            });
+        }
     });
 
+    // Fund Transfer
+    server.Post("/api/transfer", [&database, &sessionManager](const httplib::Request& req, httplib::Response& res) {
+        std::string token = extractBearerToken(req);
+        int userId = -1;
 
-    std::cout << "\n====================================\n";
-    std::cout << " ATM TRANSACTION SIMULATION SYSTEM\n";
-    std::cout << "====================================\n";
+        if (token.empty() || !sessionManager.validateSession(token, userId)) {
+            sendJson(res, 401, {
+                {"status", "error"},
+                {"message", "Invalid or expired session."}
+            });
+            return;
+        }
 
-    std::cout << "Database initialization complete.\n";
-    std::cout << "Authentication service initialized.\n";
-    std::cout << "Session manager initialized.\n";
+        try {
+            const json request = json::parse(req.body);
 
-    std::cout << "Server: http://localhost:8080\n";
+            std::string targetAccount;
+            if (request.contains("targetAccount") && request["targetAccount"].is_string()) {
+                targetAccount = request["targetAccount"].get<std::string>();
+            } else if (request.contains("recipientAccountNumber") && request["recipientAccountNumber"].is_string()) {
+                targetAccount = request["recipientAccountNumber"].get<std::string>();
+            }
 
-    std::cout << "\nAvailable API endpoints:\n";
-    std::cout << "GET  /api/health\n";
-    std::cout << "GET  /api/health/db\n";
-    std::cout << "POST /api/auth/register\n";
-    std::cout << "POST /api/auth/login\n";
-    std::cout << "POST /api/transfer\n";
+            if (targetAccount.empty() || !request.contains("amount") || !request["amount"].is_number()) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "Recipient account number and numeric amount are required."}
+                });
+                return;
+            }
 
-    if (!server.listen("127.0.0.1", 8080)) {
-        std::cerr << "Failed to start server." << std::endl;
+            const long double amountRupees = request["amount"].get<long double>();
+
+            if (targetAccount.empty() || targetAccount.size() > 32 ||
+                !std::all_of(targetAccount.begin(), targetAccount.end(), [](unsigned char c) { return std::isdigit(c); })) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "Enter a valid recipient account number (digits only)."}
+                });
+                return;
+            }
+
+            if (!std::isfinite(amountRupees) || amountRupees <= 0.0L ||
+                amountRupees > static_cast<long double>(std::numeric_limits<std::int64_t>::max()) / 100.0L) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "Transfer amount must be a positive number."}
+                });
+                return;
+            }
+
+            const long double paiseValue = std::round(amountRupees * 100.0L);
+            if (std::fabs(paiseValue - amountRupees * 100.0L) > 0.000001L) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "Amount cannot have more than two decimal places."}
+                });
+                return;
+            }
+            const auto amountPaise = static_cast<std::int64_t>(paiseValue);
+
+            const std::string senderAccount = database.getAccountNumberForUser(userId);
+            if (senderAccount.empty()) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "No active sender account is available."}
+                });
+                return;
+            }
+
+            if (senderAccount == targetAccount) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "Self-transfer is not allowed. Please enter a different recipient account."}
+                });
+                return;
+            }
+
+            const TransferResult result = database.transferFunds(senderAccount, targetAccount, amountPaise);
+            if (!result.success) {
+                sendJson(res, result.clientError ? 400 : 500, {
+                    {"status", "error"},
+                    {"message", result.message}
+                });
+                return;
+            }
+
+            sendJson(res, 200, {
+                {"status", "success"},
+                {"message", result.message},
+                {"senderAccount", senderAccount},
+                {"targetAccount", targetAccount},
+                {"transferredAmount", static_cast<double>(amountPaise) / 100.0},
+                {"balancePaise", result.senderBalancePaise},
+                {"balance", static_cast<double>(result.senderBalancePaise) / 100.0}
+            });
+        } catch (const json::exception&) {
+            sendJson(res, 400, {
+                {"status", "error"},
+                {"message", "Invalid JSON request format."}
+            });
+        }
+    });
+
+    // Transaction History
+    server.Get("/api/transactions", [&sessionManager, &database](const httplib::Request& req, httplib::Response& res) {
+        std::string token = extractBearerToken(req);
+        int userId = -1;
+
+        if (token.empty() || !sessionManager.validateSession(token, userId)) {
+            sendJson(res, 401, {
+                {"status", "error"},
+                {"message", "Invalid or expired session."}
+            });
+            return;
+        }
+
+        AccountDetails acc = database.getAccountDetailsForUser(userId);
+        if (!acc.found) {
+            sendJson(res, 404, {
+                {"status", "error"},
+                {"message", "Account not found for authenticated user."}
+            });
+            return;
+        }
+
+        int limit = 50;
+        if (req.has_param("limit")) {
+            try {
+                limit = std::stoi(req.get_param_value("limit"));
+                if (limit <= 0 || limit > 100) limit = 50;
+            } catch (...) {
+                limit = 50;
+            }
+        }
+
+        std::vector<TransactionItem> history = database.getTransactionHistory(acc.accountId, limit);
+
+        json txArray = json::array();
+        for (const auto& item : history) {
+            txArray.push_back({
+                {"id", item.id},
+                {"type", item.type},
+                {"direction", item.direction},
+                {"amountPaise", item.amountPaise},
+                {"amount", static_cast<double>(item.amountPaise) / 100.0},
+                {"description", item.description},
+                {"relatedAccount", item.relatedAccount},
+                {"createdAt", item.createdAt}
+            });
+        }
+
+        sendJson(res, 200, {
+            {"status", "success"},
+            {"accountNumber", acc.accountNumber},
+            {"balancePaise", acc.balancePaise},
+            {"balance", static_cast<double>(acc.balancePaise) / 100.0},
+            {"count", static_cast<int>(history.size())},
+            {"transactions", txArray}
+        });
+    });
+
+    // Determine host and port
+    const char* envHost = std::getenv("HOST");
+    std::string host = envHost ? envHost : "0.0.0.0";
+
+    int port = 8080;
+    if (const char* envPort = std::getenv("PORT")) {
+        try {
+            port = std::stoi(envPort);
+        } catch (...) {
+            port = 8080;
+        }
+    }
+
+    std::cout << "\n============================================\n";
+    std::cout << " NOIR — ATM TRANSACTION SIMULATION PLATFORM\n";
+    std::cout << " (C++17 + SQLite + Modern Fintech Architecture)\n";
+    std::cout << "============================================\n";
+    std::cout << "[INFO] Database: " << dbPath << "\n";
+    std::cout << "[INFO] Listening on: http://" << host << ":" << port << "\n";
+    std::cout << "[INFO] Endpoints active:\n";
+    std::cout << "  GET  /api/health\n";
+    std::cout << "  GET  /api/health/db\n";
+    std::cout << "  POST /api/auth/register\n";
+    std::cout << "  POST /api/auth/login\n";
+    std::cout << "  POST /api/auth/logout\n";
+    std::cout << "  GET  /api/auth/validate\n";
+    std::cout << "  GET  /api/account\n";
+    std::cout << "  POST /api/deposit\n";
+    std::cout << "  POST /api/withdraw\n";
+    std::cout << "  POST /api/transfer\n";
+    std::cout << "  GET  /api/transactions\n";
+    std::cout << "============================================\n\n";
+
+    if (!server.listen(host.c_str(), port)) {
+        std::cerr << "Failed to start server on " << host << ":" << port << std::endl;
         return 1;
     }
 
     return 0;
 }
-

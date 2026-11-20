@@ -1,67 +1,482 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="ATM Transaction Simulation - secure fund transfer demo">
-    <title>ATM Transaction Simulation | Fund Transfer</title>
-    <style>
-        :root { color-scheme: light; --ink:#18212f; --muted:#667085; --line:#e4e7ec; --surface:#fff; --page:#f4f6f8; --accent:#263b57; }
-        * { box-sizing:border-box; }
-        body { margin:0; min-height:100vh; padding:32px 16px; background:var(--page); color:var(--ink); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
-        main { width:min(100%,560px); margin:36px auto; }
-        .eyebrow { margin:0 0 8px; color:var(--muted); font-size:12px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
-        h1 { margin:0; font-size:clamp(26px,5vw,34px); letter-spacing:-.03em; }
-        .intro { margin:8px 0 24px; color:var(--muted); }
-        .panel { padding:26px; border:1px solid var(--line); border-radius:16px; background:var(--surface); box-shadow:0 8px 28px #18212f0a; }
-        label { display:block; margin:16px 0 6px; font-weight:650; }
-        input { width:100%; min-height:46px; padding:10px 12px; border:1px solid #cfd5dd; border-radius:8px; background:#fff; color:var(--ink); font:inherit; }
-        input:focus { outline:3px solid #263b5722; border-color:var(--accent); }
-        button { width:100%; min-height:48px; margin-top:22px; border:0; border-radius:8px; background:var(--accent); color:white; font:inherit; font-weight:700; cursor:pointer; }
-        button:disabled { opacity:.6; cursor:wait; }
-        .balance { margin-top:20px; padding:15px 16px; border-radius:10px; background:#f2f4f7; }
-        .balance span { display:block; color:var(--muted); font-size:13px; }
-        .balance strong { display:block; margin-top:2px; font-size:24px; }
-        #transferStatus { min-height:24px; margin:16px 0 0; font-weight:650; }
-        #transferStatus.success { color:#16803c; }
-        #transferStatus.error { color:#c12b2b; }
-        .note { margin:16px 0 0; color:var(--muted); font-size:12px; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="NOIR — Educational ATM and Banking Transaction Simulation Platform">
+  <title>NOIR — ATM Simulation Platform</title>
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <main>
-        <p class="eyebrow">ATM Transaction Simulation</p>
-        <h1>Fund transfer</h1>
-        <p class="intro">Transfer simulated funds to another active ATM account.</p>
 
-        <section class="panel" aria-labelledby="transferHeading">
-            <h2 id="transferHeading">Transfer details</h2>
-            <form id="transferForm">
-                <label for="sessionToken">Session token</label>
-                <input id="sessionToken" name="sessionToken" type="password"
-                       autocomplete="off" placeholder="Paste the token received after login" required>
+  <!-- Mandatory Simulation Notice Banner -->
+  <div class="simulation-banner">
+    <span class="sim-pill">SIMULATION ENVIRONMENT</span>
+    <span>NO REAL MONEY — Educational ATM & Banking Simulation Platform</span>
+  </div>
 
-                <label for="targetAccount">Receiver account number</label>
-                <input id="targetAccount" name="targetAccount" type="text"
-                       inputmode="numeric" pattern="[0-9]+" maxlength="32"
-                       placeholder="Enter receiver account number" required>
+  <!-- Main Header & Navigation -->
+  <header class="main-header">
+    <div class="header-container">
+      <div class="brand-wrapper">
+        <div class="brand-logo-icon">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <rect x="2" y="5" width="20" height="14" rx="2"></rect>
+            <line x1="2" y1="10" x2="22" y2="10"></line>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>NOIR</h1>
+          <span>ATM Simulation Platform</span>
+        </div>
+      </div>
 
-                <label for="transferAmount">Amount (₹)</label>
-                <input id="transferAmount" name="amount" type="number"
-                       min="0.01" step="0.01" inputmode="decimal"
-                       placeholder="e.g. 250.00" required>
+      <!-- User Quick Info (Visible when logged in) -->
+      <div id="userQuickInfo" class="user-quick-info" style="display: none;">
+        <div class="user-account-badge">
+          <span>A/C:</span>
+          <span id="headerAccountNum" class="account-num-code">—</span>
+          <button id="copyAccountBtn" class="copy-btn" title="Copy Account Number">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+          </button>
+        </div>
+        <button id="logoutBtn" class="logout-btn">
+          <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+            <polyline points="16 17 21 12 16 7"></polyline>
+            <line x1="21" y1="12" x2="9" y2="12"></line>
+          </svg>
+          Logout
+        </button>
+      </div>
+    </div>
+  </header>
 
-                <button id="transferButton" type="submit">Transfer funds</button>
-            </form>
+  <!-- Main Content Container -->
+  <main class="app-container">
 
-            <div class="balance" aria-live="polite">
-                <span>Updated available balance</span>
-                <strong id="currentBalance">—</strong>
+    <!-- ====================================================================
+         AUTH VIEW (Login & Registration)
+         ==================================================================== -->
+    <section id="authSection" class="auth-wrapper">
+      <div class="auth-header-hero">
+        <h2>ATM Access Terminal</h2>
+        <p>Sign in with your simulated account credentials or create a new test account.</p>
+      </div>
+
+      <div class="auth-tabs">
+        <button id="tabLoginBtn" class="auth-tab-btn active">Sign In to ATM</button>
+        <button id="tabRegisterBtn" class="auth-tab-btn">Open Test Account</button>
+      </div>
+
+      <div class="auth-body">
+        <!-- Quick Fill Helper Chip -->
+        <div class="demo-chip-box">
+          <span>Tip:</span> Register a new simulated account to immediately receive <strong>₹10,000.00</strong> promotional demo balance.
+        </div>
+
+        <!-- Login Form -->
+        <form id="loginForm">
+          <div class="form-group">
+            <label for="loginIdentifier">Email or Account Number</label>
+            <div class="input-with-icon">
+              <svg class="input-icon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                <circle cx="12" cy="7" r="4"></circle>
+              </svg>
+              <input type="text" id="loginIdentifier" class="text-input" placeholder="e.g. aditya@example.com" required autocomplete="username">
             </div>
-            <p id="transferStatus" role="status" aria-live="polite"></p>
-            <p class="note">Simulation only. No real money or banking network is involved.</p>
-        </section>
-    </main>
-    <script src="js/app.js" defer></script>
+          </div>
+
+          <div class="form-group">
+            <label for="loginPin">6-Digit ATM PIN</label>
+            <div class="input-with-icon">
+              <svg class="input-icon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+              <input type="password" id="loginPin" class="text-input" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="••••••" required autocomplete="current-password">
+              <button type="button" class="pin-toggle-btn" data-target="loginPin" title="Show/Hide PIN">
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <button type="submit" id="loginSubmitBtn" class="btn-primary">
+            <span>Authenticate & Enter ATM</span>
+          </button>
+        </form>
+
+        <!-- Register Form (Hidden by default) -->
+        <form id="registerForm" style="display: none;">
+          <div class="form-group">
+            <label for="regFullName">Full Legal Name</label>
+            <div class="input-with-icon">
+              <svg class="input-icon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                <circle cx="12" cy="7" r="4"></circle>
+              </svg>
+              <input type="text" id="regFullName" class="text-input" placeholder="e.g. Aditya Sharma" required>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="regEmail">Email Address</label>
+            <div class="input-with-icon">
+              <svg class="input-icon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                <polyline points="22,6 12,13 2,6"></polyline>
+              </svg>
+              <input type="email" id="regEmail" class="text-input" placeholder="e.g. aditya@test.com" required>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="regPin">Set 6-Digit ATM PIN</label>
+            <div class="input-with-icon">
+              <svg class="input-icon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+              <input type="password" id="regPin" class="text-input" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="6 numeric digits" required>
+              <button type="button" class="pin-toggle-btn" data-target="regPin" title="Show/Hide PIN">
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <button type="submit" id="regSubmitBtn" class="btn-primary">
+            <span>Create Account & Claim ₹10,000</span>
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         AUTHENTICATED DASHBOARD VIEW
+         ==================================================================== -->
+    <section id="dashboardSection" style="display: none;">
+
+      <!-- Top Overview Grid -->
+      <div class="dashboard-grid">
+        <!-- 3D Virtual ATM Debit Card -->
+        <div class="atm-card-wrapper">
+          <div class="atm-debit-card">
+            <div class="card-top-row">
+              <span class="card-brand-tag">NOIR PLATINUM SIMULATED</span>
+              <div class="card-contactless">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M8.5 16.5a5 5 0 0 1 0-9"></path>
+                  <path d="M12 19a8.5 8.5 0 0 0 0-14"></path>
+                  <path d="M15.5 21.5a12 12 0 0 0 0-19"></path>
+                </svg>
+              </div>
+            </div>
+
+            <div class="card-emv-chip"></div>
+
+            <div class="card-number-display" id="cardAccountNumber">•••• •••• •••• ••••</div>
+
+            <div class="card-bottom-row">
+              <div class="card-holder-info">
+                <label>Cardholder</label>
+                <span id="cardHolderName">SIMULATED USER</span>
+              </div>
+              <div class="card-expiry-info">
+                <label>Valid Thru</label>
+                <span>12/30</span>
+              </div>
+              <div class="card-scheme-logo">ATM</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Available Balance Summary Card -->
+        <div class="balance-card">
+          <div class="balance-card-header">
+            <span class="balance-label">Total Available Balance</span>
+            <button id="refreshBalanceBtn" class="refresh-btn">
+              <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path d="M23 4v6h-6"></path>
+                <path d="M1 20v-6h6"></path>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+              </svg>
+              Refresh
+            </button>
+          </div>
+
+          <div class="balance-amount-box">
+            <div class="balance-primary" id="dashboardBalanceDisplay">₹ 0.00</div>
+            <div class="balance-subtext" id="balanceStatusNote">● Account Active & Verified</div>
+          </div>
+
+          <div class="balance-card-stats">
+            <div class="stat-item">
+              <span>Account Number</span>
+              <strong id="statAccountNumber">—</strong>
+            </div>
+            <div class="stat-item">
+              <span>Currency Standard</span>
+              <strong>INR (₹) / Paise</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Operations Tabs -->
+      <div class="action-center">
+        <nav class="nav-tabs">
+          <button class="tab-btn active" data-tab="tab-withdraw">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+              <circle cx="12" cy="12" r="2"></circle>
+              <path d="M6 12h.01M18 12h.01"></path>
+            </svg>
+            Cash Withdrawal
+          </button>
+          <button class="tab-btn" data-tab="tab-deposit">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            Cash Deposit
+          </button>
+          <button class="tab-btn" data-tab="tab-transfer">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <polyline points="17 1 21 5 17 9"></polyline>
+              <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+              <polyline points="7 23 3 19 7 15"></polyline>
+              <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+            </svg>
+            Fund Transfer
+          </button>
+          <button class="tab-btn" data-tab="tab-history">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+            </svg>
+            Passbook History
+          </button>
+        </nav>
+
+        <!-- Tab 1: Cash Withdrawal -->
+        <div id="tab-withdraw" class="tab-content">
+          <h3 class="panel-title">Fast Cash & Custom Withdrawal</h3>
+          <p class="panel-description">Select an ATM preset denomination or specify an amount in multiples of ₹100.</p>
+
+          <div class="preset-chips">
+            <button class="chip-btn withdraw-preset" data-amount="500">₹ 500</button>
+            <button class="chip-btn withdraw-preset" data-amount="1000">₹ 1,000</button>
+            <button class="chip-btn withdraw-preset" data-amount="2000">₹ 2,000</button>
+            <button class="chip-btn withdraw-preset" data-amount="5000">₹ 5,000</button>
+            <button class="chip-btn withdraw-preset" data-amount="10000">₹ 10,000</button>
+          </div>
+
+          <form id="withdrawForm">
+            <div class="form-group">
+              <label for="withdrawAmount">Withdrawal Amount (₹)</label>
+              <div class="input-with-icon">
+                <span class="input-icon" style="font-weight: 700; font-size: 1.1rem;">₹</span>
+                <input type="number" id="withdrawAmount" class="text-input" min="100" max="50000" step="100" placeholder="e.g. 1500" required>
+              </div>
+            </div>
+
+            <div id="dispenserNotes" class="dispenser-visualizer">
+              <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <rect x="2" y="6" width="20" height="12" rx="2"></rect>
+                <circle cx="12" cy="12" r="2"></circle>
+              </svg>
+              <span id="dispenserText">Dispenser ready: select or enter withdrawal amount</span>
+            </div>
+
+            <button type="submit" id="withdrawSubmitBtn" class="btn-primary">
+              <span>Dispense Simulated Cash</span>
+            </button>
+          </form>
+        </div>
+
+        <!-- Tab 2: Cash Deposit -->
+        <div id="tab-deposit" class="tab-content" style="display: none;">
+          <h3 class="panel-title">Cash & Cheque Deposit</h3>
+          <p class="panel-description">Instant simulated deposit into your active account. Balance reflects immediately.</p>
+
+          <div class="preset-chips">
+            <button class="chip-btn deposit-preset" data-amount="1000">₹ 1,000</button>
+            <button class="chip-btn deposit-preset" data-amount="5000">₹ 5,000</button>
+            <button class="chip-btn deposit-preset" data-amount="10000">₹ 10,000</button>
+            <button class="chip-btn deposit-preset" data-amount="25000">₹ 25,000</button>
+            <button class="chip-btn deposit-preset" data-amount="50000">₹ 50,000</button>
+          </div>
+
+          <form id="depositForm">
+            <div class="form-group">
+              <label for="depositAmount">Deposit Amount (₹)</label>
+              <div class="input-with-icon">
+                <span class="input-icon" style="font-weight: 700; font-size: 1.1rem;">₹</span>
+                <input type="number" id="depositAmount" class="text-input" min="1" max="1000000" step="0.01" placeholder="e.g. 5000.00" required>
+              </div>
+            </div>
+
+            <button type="submit" id="depositSubmitBtn" class="btn-primary">
+              <span>Confirm Cash Deposit</span>
+            </button>
+          </form>
+        </div>
+
+        <!-- Tab 3: Fund Transfer -->
+        <div id="tab-transfer" class="tab-content" style="display: none;">
+          <h3 class="panel-title">Direct Account-to-Account Transfer</h3>
+          <p class="panel-description">Transfer simulated funds atomically to any active account in the simulation network.</p>
+
+          <form id="transferForm">
+            <div class="form-group">
+              <label for="transferTarget">Recipient Account Number</label>
+              <div class="input-with-icon">
+                <svg class="input-icon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <rect x="2" y="5" width="20" height="14" rx="2"></rect>
+                  <line x1="2" y1="10" x2="22" y2="10"></line>
+                </svg>
+                <input type="text" id="transferTarget" class="text-input" inputmode="numeric" pattern="[0-9]+" maxlength="32" placeholder="e.g. 1000000002" required>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="transferAmount">Transfer Amount (₹)</label>
+              <div class="input-with-icon">
+                <span class="input-icon" style="font-weight: 700; font-size: 1.1rem;">₹</span>
+                <input type="number" id="transferAmount" class="text-input" min="0.01" max="1000000" step="0.01" placeholder="e.g. 1250.00" required>
+              </div>
+            </div>
+
+            <button type="submit" id="transferSubmitBtn" class="btn-primary">
+              <span>Execute Secure Transfer</span>
+            </button>
+          </form>
+        </div>
+
+        <!-- Tab 4: Transaction Passbook History -->
+        <div id="tab-history" class="tab-content" style="display: none;">
+          <div class="history-controls">
+            <div>
+              <h3 class="panel-title">Transaction Ledger</h3>
+              <p class="panel-description" style="margin-bottom: 0;">Comprehensive statement of all credits, debits, and transfers.</p>
+            </div>
+            <div class="filter-pills">
+              <button class="filter-pill active" data-filter="all">All</button>
+              <button class="filter-pill" data-filter="credit">Credits (+)</button>
+              <button class="filter-pill" data-filter="debit">Debits (-)</button>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Description / Type</th>
+                  <th>Party / Account</th>
+                  <th>Amount</th>
+                  <th>Receipt</th>
+                </tr>
+              </thead>
+              <tbody id="transactionTableBody">
+                <tr>
+                  <td colspan="5" class="empty-state">
+                    Loading transaction records...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ====================================================================
+       TRANSACTION RECEIPT MODAL
+       ==================================================================== -->
+  <div id="receiptModal" class="modal-overlay" style="display: none;">
+    <div class="receipt-modal">
+      <div class="receipt-paper">
+        <div class="receipt-header">
+          <h3>NOIR ATM RECEIPT</h3>
+          <p>SIMULATED TRANSACTION RECORD</p>
+          <p style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--slate-400);">TERMINAL #NOIR-ATM-042</p>
+        </div>
+
+        <div class="receipt-details-list">
+          <div class="receipt-row">
+            <span>Transaction ID:</span>
+            <strong id="rcptTxId">—</strong>
+          </div>
+          <div class="receipt-row">
+            <span>Date & Time:</span>
+            <strong id="rcptDate">—</strong>
+          </div>
+          <div class="receipt-row">
+            <span>Account Number:</span>
+            <strong id="rcptAccount">—</strong>
+          </div>
+          <div class="receipt-row">
+            <span>Operation:</span>
+            <strong id="rcptType">—</strong>
+          </div>
+          <div class="receipt-row" id="rcptPartyRow" style="display: none;">
+            <span>Related Account:</span>
+            <strong id="rcptParty">—</strong>
+          </div>
+          <div class="receipt-row receipt-total-row">
+            <span>Amount:</span>
+            <strong id="rcptAmount">—</strong>
+          </div>
+        </div>
+
+        <p style="font-size: 0.65rem; color: var(--slate-400); text-align: center; margin-top: 16px;">
+          THIS IS A SIMULATION RECORD. NO REAL FINANCIAL INSTITUTION IS ASSOCIATED.
+        </p>
+      </div>
+
+      <div class="receipt-modal-actions">
+        <button id="printReceiptBtn" class="btn-primary" style="padding: 10px;">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <polyline points="6 9 6 2 18 2 18 9"></polyline>
+            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+            <rect x="6" y="14" width="12" height="8"></rect>
+          </svg>
+          Print Receipt
+        </button>
+        <button id="closeReceiptBtn" class="btn-secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container"></div>
+
+  <!-- Main Footer -->
+  <footer class="main-footer">
+    <div class="footer-container">
+      <div>
+        <strong>NOIR ATM Simulation Platform</strong> — Educational Software Engineering Project
+      </div>
+      <div>
+        Built with C++17, cpp-httplib, SQLite & Vanilla JavaScript
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/app.js" defer></script>
 </body>
 </html>
