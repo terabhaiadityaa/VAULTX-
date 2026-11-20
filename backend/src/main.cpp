@@ -12,6 +12,7 @@
 #include "database/Database.h"
 #include "services/AuthService.h"
 #include "security/SessionManager.h"
+#include "security/PinHasher.h"
 
 using json = nlohmann::json;
 
@@ -32,6 +33,81 @@ void sendJson(httplib::Response& res, int status, const json& body) {
     res.set_header("Access-Control-Allow-Origin", "*");
     res.set_header("Cache-Control", "no-store");
     res.set_content(body.dump(4), "application/json");
+}
+
+void seedDemoAccounts(Database& database) {
+    sqlite3* db = database.getConnection();
+    if (!db) return;
+
+    struct DemoCard {
+        std::string name;
+        std::string email;
+        std::string pin;
+        std::string accountNum;
+        std::int64_t balancePaise;
+        std::string tier;
+    };
+
+    std::vector<DemoCard> demoCards = {
+        {"Aditya Sharma", "aditya@noir.atm", "123456", "100020003000", 7500000, "Platinum VIP"},
+        {"Priya Patel",   "priya@noir.atm",  "654321", "100020004000", 4250000, "Gold Premium"},
+        {"Rahul Verma",   "rahul@noir.atm",  "112233", "100020005000", 15000000, "Business Executive"},
+        {"Simran Kaur",   "simran@noir.atm", "998877", "100020006000", 1800000, "Student Advantage"}
+    };
+
+    for (const auto& card : demoCards) {
+        sqlite3_stmt* checkStmt = nullptr;
+        if (sqlite3_prepare_v2(db, "SELECT id FROM accounts WHERE account_number = ?;", -1, &checkStmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_text(checkStmt, 1, card.accountNum.c_str(), -1, SQLITE_TRANSIENT);
+            if (sqlite3_step(checkStmt) == SQLITE_ROW) {
+                sqlite3_finalize(checkStmt);
+                continue; // Already seeded
+            }
+            sqlite3_finalize(checkStmt);
+        }
+
+        std::string hashedPin = PinHasher::hashPin(card.pin);
+        if (hashedPin.empty()) continue;
+
+        sqlite3_stmt* userStmt = nullptr;
+        if (sqlite3_prepare_v2(db, "INSERT INTO users (full_name, email, pin_hash) VALUES (?, ?, ?);", -1, &userStmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_text(userStmt, 1, card.name.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(userStmt, 2, card.email.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(userStmt, 3, hashedPin.c_str(), -1, SQLITE_TRANSIENT);
+            if (sqlite3_step(userStmt) != SQLITE_DONE) {
+                sqlite3_finalize(userStmt);
+                continue;
+            }
+            sqlite3_finalize(userStmt);
+        }
+
+        sqlite3_int64 userId = sqlite3_last_insert_rowid(db);
+
+        sqlite3_stmt* accStmt = nullptr;
+        sqlite3_int64 accId = 0;
+        if (sqlite3_prepare_v2(db, "INSERT INTO accounts (user_id, account_number, balance_paise, status) VALUES (?, ?, ?, 'active');", -1, &accStmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int64(accStmt, 1, userId);
+            sqlite3_bind_text(accStmt, 2, card.accountNum.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int64(accStmt, 3, card.balancePaise);
+            if (sqlite3_step(accStmt) == SQLITE_DONE) {
+                accId = sqlite3_last_insert_rowid(db);
+            }
+            sqlite3_finalize(accStmt);
+        }
+
+        if (accId > 0) {
+            sqlite3_stmt* txStmt = nullptr;
+            const char* txSql = "INSERT INTO transactions (account_id, transaction_type, amount_paise, description) VALUES (?, 'deposit', ?, ?);";
+            if (sqlite3_prepare_v2(db, txSql, -1, &txStmt, nullptr) == SQLITE_OK) {
+                sqlite3_bind_int64(txStmt, 1, accId);
+                sqlite3_bind_int64(txStmt, 2, card.balancePaise);
+                std::string desc = "Initial simulated balance allocation (" + card.tier + ")";
+                sqlite3_bind_text(txStmt, 3, desc.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_step(txStmt);
+                sqlite3_finalize(txStmt);
+            }
+        }
+    }
 }
 
 } // namespace
@@ -57,6 +133,9 @@ int main() {
         std::cerr << "Database initialization failed with schema: " << schemaPath << std::endl;
         return 1;
     }
+
+    // Seed realistic demo simulation accounts
+    seedDemoAccounts(database);
 
     AuthService authService(database);
     SessionManager sessionManager;
@@ -115,41 +194,78 @@ int main() {
         });
     });
 
-    // User registration
+    // Pre-configured simulated demo accounts
+    server.Get("/api/demo-accounts", [](const httplib::Request&, httplib::Response& res) {
+        sendJson(res, 200, {
+            {"status", "success"},
+            {"accounts", {
+                {
+                    {"accountNumber", "100020003000"},
+                    {"name", "Aditya Sharma"},
+                    {"tier", "Platinum VIP"},
+                    {"pin", "123456"},
+                    {"balance", 75000.0}
+                },
+                {
+                    {"accountNumber", "100020004000"},
+                    {"name", "Priya Patel"},
+                    {"tier", "Gold Premium"},
+                    {"pin", "654321"},
+                    {"balance", 42500.0}
+                },
+                {
+                    {"accountNumber", "100020005000"},
+                    {"name", "Rahul Verma"},
+                    {"tier", "Business Executive"},
+                    {"pin", "112233"},
+                    {"balance", 150000.0}
+                },
+                {
+                    {"accountNumber", "100020006000"},
+                    {"name", "Simran Kaur"},
+                    {"tier", "Student Advantage"},
+                    {"pin", "998877"},
+                    {"balance", 18000.0}
+                }
+            }}
+        });
+    });
+
+    // User registration (Card issuance)
     server.Post("/api/auth/register", [&authService](const httplib::Request& req, httplib::Response& res) {
         try {
             json request = json::parse(req.body);
 
-            if (!request.contains("fullName") ||
-                !request.contains("email") ||
-                !request.contains("pin") ||
-                !request["fullName"].is_string() ||
-                !request["email"].is_string() ||
-                !request["pin"].is_string()) {
+            if (!request.contains("fullName") || !request.contains("pin") ||
+                !request["fullName"].is_string() || !request["pin"].is_string()) {
                 sendJson(res, 400, {
                     {"status", "error"},
-                    {"message", "Full name, email, and 6-digit PIN are required."}
+                    {"message", "Full name and 6-digit PIN are required."}
                 });
                 return;
             }
 
+            std::string email = "";
+            if (request.contains("email") && request["email"].is_string()) {
+                email = request["email"].get<std::string>();
+            }
+
             AuthResult result = authService.registerUser(
                 request["fullName"].get<std::string>(),
-                request["email"].get<std::string>(),
+                email,
                 request["pin"].get<std::string>()
             );
 
             if (result.success) {
                 sendJson(res, 201, {
                     {"status", "success"},
-                    {"message", result.message},
+                    {"message", "New ATM Debit Card issued successfully."},
                     {"userId", result.userId},
                     {"accountNumber", result.accountNumber},
                     {"initialBalance", 10000.0}
                 });
             } else {
-                int code = (result.message == "This email is already registered.") ? 409 : 400;
-                sendJson(res, code, {
+                sendJson(res, 400, {
                     {"status", "error"},
                     {"message", result.message}
                 });
@@ -162,23 +278,36 @@ int main() {
         }
     });
 
-    // User login
+    // ATM Card Login (Account Number + PIN)
     server.Post("/api/auth/login", [&authService, &sessionManager, &database](const httplib::Request& req, httplib::Response& res) {
         try {
             json request = json::parse(req.body);
 
-            if (!request.contains("email") ||
-                !request.contains("pin") ||
-                !request["email"].is_string() ||
-                !request["pin"].is_string()) {
+            std::string identifier = "";
+            if (request.contains("accountNumber") && request["accountNumber"].is_string()) {
+                identifier = request["accountNumber"].get<std::string>();
+            } else if (request.contains("email") && request["email"].is_string()) {
+                identifier = request["email"].get<std::string>();
+            } else if (request.contains("identifier") && request["identifier"].is_string()) {
+                identifier = request["identifier"].get<std::string>();
+            }
+
+            if (identifier.empty() || !request.contains("pin") || !request["pin"].is_string()) {
                 sendJson(res, 400, {
                     {"status", "error"},
-                    {"message", "Email/Account Number and PIN are required."}
+                    {"message", "12-digit ATM Card/Account Number and 6-digit PIN are required."}
                 });
                 return;
             }
 
-            std::string identifier = request["email"].get<std::string>();
+            // Strip spaces and dashes from account number
+            identifier.erase(
+                std::remove_if(identifier.begin(), identifier.end(), [](unsigned char c) {
+                    return c == ' ' || c == '-';
+                }),
+                identifier.end()
+            );
+
             std::string pin = request["pin"].get<std::string>();
 
             AuthResult result = authService.loginUser(identifier, pin);
@@ -203,7 +332,7 @@ int main() {
 
             sendJson(res, 200, {
                 {"status", "success"},
-                {"message", "Login successful."},
+                {"message", "Card authenticated successfully."},
                 {"userId", result.userId},
                 {"fullName", acc.fullName},
                 {"email", acc.email},
@@ -328,10 +457,10 @@ int main() {
             }
 
             long double amountRupees = request["amount"].get<long double>();
-            if (!std::isfinite(amountRupees) || amountRupees <= 0.0L || amountRupees > 1000000.0L) {
+            if (!std::isfinite(amountRupees) || amountRupees <= 0.0L || amountRupees > 10000000.0L) {
                 sendJson(res, 400, {
                     {"status", "error"},
-                    {"message", "Deposit amount must be between ₹1 and ₹10,00,000."}
+                    {"message", "Deposit amount must be between ₹1 and ₹1,00,00,000."}
                 });
                 return;
             }
@@ -422,7 +551,7 @@ int main() {
             }
             std::int64_t amountPaise = static_cast<std::int64_t>(paiseValue);
 
-            if (amountPaise % 10000 != 0) { // must be a multiple of 100 rupees (10000 paise)
+            if (amountPaise % 10000 != 0) {
                 sendJson(res, 400, {
                     {"status", "error"},
                     {"message", "ATM cash withdrawal must be in multiples of ₹100 notes."}
@@ -494,6 +623,14 @@ int main() {
                 });
                 return;
             }
+
+            // Strip spaces and dashes
+            targetAccount.erase(
+                std::remove_if(targetAccount.begin(), targetAccount.end(), [](unsigned char c) {
+                    return c == ' ' || c == '-';
+                }),
+                targetAccount.end()
+            );
 
             const long double amountRupees = request["amount"].get<long double>();
 
@@ -641,17 +778,16 @@ int main() {
 
     std::cout << "\n============================================\n";
     std::cout << " NOIR — ATM TRANSACTION SIMULATION PLATFORM\n";
-    std::cout << " (C++17 + SQLite + Modern Fintech Architecture)\n";
+    std::cout << " (Account-Only ATM Card Authentication)\n";
     std::cout << "============================================\n";
     std::cout << "[INFO] Database: " << dbPath << "\n";
     std::cout << "[INFO] Listening on: http://" << host << ":" << port << "\n";
     std::cout << "[INFO] Endpoints active:\n";
     std::cout << "  GET  /api/health\n";
-    std::cout << "  GET  /api/health/db\n";
+    std::cout << "  GET  /api/demo-accounts\n";
     std::cout << "  POST /api/auth/register\n";
     std::cout << "  POST /api/auth/login\n";
     std::cout << "  POST /api/auth/logout\n";
-    std::cout << "  GET  /api/auth/validate\n";
     std::cout << "  GET  /api/account\n";
     std::cout << "  POST /api/deposit\n";
     std::cout << "  POST /api/withdraw\n";

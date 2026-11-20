@@ -34,9 +34,9 @@
       <!-- User Quick Info (Visible when logged in) -->
       <div id="userQuickInfo" class="user-quick-info" style="display: none;">
         <div class="user-account-badge">
-          <span>A/C:</span>
+          <span>ATM CARD:</span>
           <span id="headerAccountNum" class="account-num-code">—</span>
-          <button id="copyAccountBtn" class="copy-btn" title="Copy Account Number">
+          <button id="copyAccountBtn" class="copy-btn" title="Copy Card Number">
             <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -49,7 +49,7 @@
             <polyline points="16 17 21 12 16 7"></polyline>
             <line x1="21" y1="12" x2="9" y2="12"></line>
           </svg>
-          Logout
+          Eject Card
         </button>
       </div>
     </div>
@@ -59,105 +59,165 @@
   <main class="app-container">
 
     <!-- ====================================================================
-         AUTH VIEW (Login & Registration)
+         AUTH VIEW (ATM Card Access & Registration)
          ==================================================================== -->
     <section id="authSection" class="auth-wrapper">
       <div class="auth-header-hero">
         <h2>ATM Access Terminal</h2>
-        <p>Sign in with your simulated account credentials or create a new test account.</p>
+        <p>Insert or select a simulated ATM card, or issue a new test debit card.</p>
       </div>
 
       <div class="auth-tabs">
-        <button id="tabLoginBtn" class="auth-tab-btn active">Sign In to ATM</button>
-        <button id="tabRegisterBtn" class="auth-tab-btn">Open Test Account</button>
+        <button id="tabLoginBtn" class="auth-tab-btn active">Insert ATM Card</button>
+        <button id="tabRegisterBtn" class="auth-tab-btn">Issue New ATM Card</button>
       </div>
 
       <div class="auth-body">
-        <!-- Quick Fill Helper Chip -->
-        <div class="demo-chip-box">
-          <span>Tip:</span> Register a new simulated account to immediately receive <strong>₹10,000.00</strong> promotional demo balance.
+        
+        <!-- Login View -->
+        <div id="loginView">
+          <!-- Simulation Demo Cards Selector -->
+          <div class="demo-cards-section">
+            <div class="demo-cards-header">
+              <span>Select a Simulated Demo Card</span>
+              <span style="font-size: 0.7rem; color: var(--accent-blue);">1-Click Insert</span>
+            </div>
+            <div class="demo-cards-grid" id="demoCardsContainer">
+              <!-- Dynamically populated or fallback -->
+              <div class="demo-card-item" data-acc="100020003000" data-pin="123456">
+                <div class="demo-card-top">
+                  <span class="demo-card-name">Aditya Sharma</span>
+                  <span class="demo-card-tier">Platinum VIP</span>
+                </div>
+                <div class="demo-card-number">1000 2000 3000</div>
+                <div class="demo-card-bottom">
+                  <span class="demo-card-balance">₹ 75,000.00</span>
+                  <span class="demo-card-pin">PIN: 123456</span>
+                </div>
+              </div>
+
+              <div class="demo-card-item" data-acc="100020004000" data-pin="654321">
+                <div class="demo-card-top">
+                  <span class="demo-card-name">Priya Patel</span>
+                  <span class="demo-card-tier" style="background: #fef3c7; color: #92400e;">Gold Premium</span>
+                </div>
+                <div class="demo-card-number">1000 2000 4000</div>
+                <div class="demo-card-bottom">
+                  <span class="demo-card-balance">₹ 42,500.00</span>
+                  <span class="demo-card-pin">PIN: 654321</span>
+                </div>
+              </div>
+
+              <div class="demo-card-item" data-acc="100020005000" data-pin="112233">
+                <div class="demo-card-top">
+                  <span class="demo-card-name">Rahul Verma</span>
+                  <span class="demo-card-tier" style="background: #e0e7ff; color: #3730a3;">Executive</span>
+                </div>
+                <div class="demo-card-number">1000 2000 5000</div>
+                <div class="demo-card-bottom">
+                  <span class="demo-card-balance">₹ 1,50,000.00</span>
+                  <span class="demo-card-pin">PIN: 112233</span>
+                </div>
+              </div>
+
+              <div class="demo-card-item" data-acc="100020006000" data-pin="998877">
+                <div class="demo-card-top">
+                  <span class="demo-card-name">Simran Kaur</span>
+                  <span class="demo-card-tier" style="background: #d1fae5; color: #065f46;">Student</span>
+                </div>
+                <div class="demo-card-number">1000 2000 6000</div>
+                <div class="demo-card-bottom">
+                  <span class="demo-card-balance">₹ 18,000.00</span>
+                  <span class="demo-card-pin">PIN: 998877</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-divider">
+            <span>Or Enter Card Details Manually</span>
+          </div>
+
+          <!-- Card Login Form -->
+          <form id="loginForm">
+            <div class="form-group">
+              <label for="loginIdentifier">12-Digit ATM Card / Account Number</label>
+              <div class="input-with-icon">
+                <svg class="input-icon" width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <rect x="2" y="5" width="20" height="14" rx="2"></rect>
+                  <line x1="2" y1="10" x2="22" y2="10"></line>
+                </svg>
+                <input type="text" id="loginIdentifier" class="text-input account-input" inputmode="numeric" placeholder="e.g. 1000 2000 3000" required autocomplete="off" maxlength="16">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="loginPin">6-Digit ATM PIN</label>
+              <div class="input-with-icon">
+                <svg class="input-icon" width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                <input type="password" id="loginPin" class="text-input pin-input" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="••••••" required autocomplete="current-password">
+                <button type="button" class="pin-toggle-btn" data-target="loginPin" title="Show/Hide PIN">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <button type="submit" id="loginSubmitBtn" class="btn-primary">
+              <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
+              <span>Insert Card & Authenticate</span>
+            </button>
+          </form>
         </div>
 
-        <!-- Login Form -->
-        <form id="loginForm">
-          <div class="form-group">
-            <label for="loginIdentifier">Email or Account Number</label>
-            <div class="input-with-icon">
-              <svg class="input-icon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                <circle cx="12" cy="7" r="4"></circle>
-              </svg>
-              <input type="text" id="loginIdentifier" class="text-input" placeholder="e.g. aditya@example.com" required autocomplete="username">
-            </div>
+        <!-- Register View (Hidden by default) -->
+        <div id="registerView" style="display: none;">
+          <div class="demo-chip-box" style="margin-bottom: 20px;">
+            <span>Instant Issuance:</span> Enter your name and choose a PIN. Your simulated ATM card will be issued immediately with <strong>₹10,000.00</strong> promotional demo balance!
           </div>
 
-          <div class="form-group">
-            <label for="loginPin">6-Digit ATM PIN</label>
-            <div class="input-with-icon">
-              <svg class="input-icon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-              </svg>
-              <input type="password" id="loginPin" class="text-input" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="••••••" required autocomplete="current-password">
-              <button type="button" class="pin-toggle-btn" data-target="loginPin" title="Show/Hide PIN">
-                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                  <circle cx="12" cy="12" r="3"></circle>
+          <form id="registerForm">
+            <div class="form-group">
+              <label for="regFullName">Cardholder Full Name</label>
+              <div class="input-with-icon">
+                <svg class="input-icon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="12" cy="7" r="4"></circle>
                 </svg>
-              </button>
+                <input type="text" id="regFullName" class="text-input" placeholder="e.g. Aditya Sharma" required>
+              </div>
             </div>
-          </div>
 
-          <button type="submit" id="loginSubmitBtn" class="btn-primary">
-            <span>Authenticate & Enter ATM</span>
-          </button>
-        </form>
-
-        <!-- Register Form (Hidden by default) -->
-        <form id="registerForm" style="display: none;">
-          <div class="form-group">
-            <label for="regFullName">Full Legal Name</label>
-            <div class="input-with-icon">
-              <svg class="input-icon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                <circle cx="12" cy="7" r="4"></circle>
-              </svg>
-              <input type="text" id="regFullName" class="text-input" placeholder="e.g. Aditya Sharma" required>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label for="regEmail">Email Address</label>
-            <div class="input-with-icon">
-              <svg class="input-icon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
-                <polyline points="22,6 12,13 2,6"></polyline>
-              </svg>
-              <input type="email" id="regEmail" class="text-input" placeholder="e.g. aditya@test.com" required>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label for="regPin">Set 6-Digit ATM PIN</label>
-            <div class="input-with-icon">
-              <svg class="input-icon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-              </svg>
-              <input type="password" id="regPin" class="text-input" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="6 numeric digits" required>
-              <button type="button" class="pin-toggle-btn" data-target="regPin" title="Show/Hide PIN">
-                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                  <circle cx="12" cy="12" r="3"></circle>
+            <div class="form-group">
+              <label for="regPin">Choose 6-Digit ATM PIN</label>
+              <div class="input-with-icon">
+                <svg class="input-icon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                 </svg>
-              </button>
+                <input type="password" id="regPin" class="text-input pin-input" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="6 numeric digits" required>
+                <button type="button" class="pin-toggle-btn" data-target="regPin" title="Show/Hide PIN">
+                  <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                </button>
+              </div>
             </div>
-          </div>
 
-          <button type="submit" id="regSubmitBtn" class="btn-primary">
-            <span>Create Account & Claim ₹10,000</span>
-          </button>
-        </form>
+            <button type="submit" id="regSubmitBtn" class="btn-primary">
+              <span>Issue ATM Card & Claim ₹10,000</span>
+            </button>
+          </form>
+        </div>
+
       </div>
     </section>
 
@@ -216,12 +276,12 @@
 
           <div class="balance-amount-box">
             <div class="balance-primary" id="dashboardBalanceDisplay">₹ 0.00</div>
-            <div class="balance-subtext" id="balanceStatusNote">● Account Active & Verified</div>
+            <div class="balance-subtext" id="balanceStatusNote">● Card Active & Verified</div>
           </div>
 
           <div class="balance-card-stats">
             <div class="stat-item">
-              <span>Account Number</span>
+              <span>Card Account</span>
               <strong id="statAccountNumber">—</strong>
             </div>
             <div class="stat-item">
@@ -324,7 +384,7 @@
               <label for="depositAmount">Deposit Amount (₹)</label>
               <div class="input-with-icon">
                 <span class="input-icon" style="font-weight: 700; font-size: 1.1rem;">₹</span>
-                <input type="number" id="depositAmount" class="text-input" min="1" max="1000000" step="0.01" placeholder="e.g. 5000.00" required>
+                <input type="number" id="depositAmount" class="text-input" min="1" max="10000000" step="0.01" placeholder="e.g. 5000.00" required>
               </div>
             </div>
 
@@ -341,13 +401,13 @@
 
           <form id="transferForm">
             <div class="form-group">
-              <label for="transferTarget">Recipient Account Number</label>
+              <label for="transferTarget">Recipient 12-Digit Account Number</label>
               <div class="input-with-icon">
                 <svg class="input-icon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                   <rect x="2" y="5" width="20" height="14" rx="2"></rect>
                   <line x1="2" y1="10" x2="22" y2="10"></line>
                 </svg>
-                <input type="text" id="transferTarget" class="text-input" inputmode="numeric" pattern="[0-9]+" maxlength="32" placeholder="e.g. 1000000002" required>
+                <input type="text" id="transferTarget" class="text-input account-input" inputmode="numeric" placeholder="e.g. 1000 2000 4000" required maxlength="16">
               </div>
             </div>
 
@@ -355,7 +415,7 @@
               <label for="transferAmount">Transfer Amount (₹)</label>
               <div class="input-with-icon">
                 <span class="input-icon" style="font-weight: 700; font-size: 1.1rem;">₹</span>
-                <input type="number" id="transferAmount" class="text-input" min="0.01" max="1000000" step="0.01" placeholder="e.g. 1250.00" required>
+                <input type="number" id="transferAmount" class="text-input" min="0.01" max="10000000" step="0.01" placeholder="e.g. 1250.00" required>
               </div>
             </div>
 
@@ -426,7 +486,7 @@
             <strong id="rcptDate">—</strong>
           </div>
           <div class="receipt-row">
-            <span>Account Number:</span>
+            <span>Card Account Number:</span>
             <strong id="rcptAccount">—</strong>
           </div>
           <div class="receipt-row">

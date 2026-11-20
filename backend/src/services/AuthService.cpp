@@ -76,14 +76,16 @@ AuthResult AuthService::registerUser(
         return {false, "Name must contain 2 to 100 characters.", -1, ""};
     }
 
-    size_t atPosition = cleanEmail.find('@');
-
-    if (atPosition == std::string::npos ||
-        atPosition == 0 ||
-        cleanEmail.find('@', atPosition + 1) != std::string::npos ||
-        cleanEmail.find('.', atPosition) == std::string::npos) {
-
-        return {false, "Please enter a valid email address.", -1, ""};
+    if (cleanEmail.empty() || cleanEmail.find('@') == std::string::npos) {
+        // Auto-generate virtual simulated account identifier if none provided
+        cleanEmail = "sim_" + std::to_string(std::time(nullptr)) + "_" + std::to_string(std::rand() % 100000) + "@noir.atm";
+    } else {
+        size_t atPosition = cleanEmail.find('@');
+        if (atPosition == 0 ||
+            cleanEmail.find('@', atPosition + 1) != std::string::npos ||
+            cleanEmail.find('.', atPosition) == std::string::npos) {
+            return {false, "Please enter a valid email address.", -1, ""};
+        }
     }
 
     std::string hashedPin = PinHasher::hashPin(pin);
@@ -290,6 +292,18 @@ AuthResult AuthService::loginUser(
 
     cleanEmail = cleanEmail.substr(start, end - start + 1);
 
+    // If identifier is predominantly digits, strip out formatting spaces and hyphens
+    if (std::all_of(cleanEmail.begin(), cleanEmail.end(), [](unsigned char c) {
+            return std::isdigit(c) || c == ' ' || c == '-';
+        })) {
+        cleanEmail.erase(
+            std::remove_if(cleanEmail.begin(), cleanEmail.end(), [](unsigned char c) {
+                return c == ' ' || c == '-';
+            }),
+            cleanEmail.end()
+        );
+    }
+
     const std::time_t currentTime = std::time(nullptr);
 
 
@@ -382,11 +396,15 @@ AuthResult AuthService::loginUser(
     }
 
 
-    // STEP 2: Retrieve the stored PIN hash.
+    // STEP 2: Retrieve the stored PIN hash (by Account Number or Email).
     sqlite3_stmt* userStatement = nullptr;
 
     const char* userSQL =
-        "SELECT id, pin_hash FROM users WHERE email = ?;";
+        "SELECT u.id, u.pin_hash "
+        "FROM users u "
+        "LEFT JOIN accounts a ON a.user_id = u.id "
+        "WHERE a.account_number = ? OR u.email = ? "
+        "LIMIT 1;";
 
     if (sqlite3_prepare_v2(
             db,
@@ -402,6 +420,14 @@ AuthResult AuthService::loginUser(
     sqlite3_bind_text(
         userStatement,
         1,
+        cleanEmail.c_str(),
+        -1,
+        SQLITE_TRANSIENT
+    );
+
+    sqlite3_bind_text(
+        userStatement,
+        2,
         cleanEmail.c_str(),
         -1,
         SQLITE_TRANSIENT

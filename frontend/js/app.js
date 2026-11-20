@@ -1,13 +1,11 @@
 /**
  * NOIR — ATM SIMULATION PLATFORM
- * Client-side Controller & Banking Logic
+ * Client-side Controller & Banking Logic (Account Number & ATM Card Auth)
  */
 
 'use strict';
 
-// Dynamic API URL resolution:
-// If frontend is served directly by the C++ backend (same origin), use window.location.origin.
-// If served by VS Code Live Server (port 5500) or Vite (port 5173), fallback to localhost:8080.
+// Dynamic API URL resolution
 const API_BASE_URL = (window.location.port === '5500' || window.location.port === '5173' || window.location.port === '3000')
   ? 'http://127.0.0.1:8080'
   : window.location.origin;
@@ -29,13 +27,14 @@ const logoutBtn = document.getElementById('logoutBtn');
 // Auth DOM
 const tabLoginBtn = document.getElementById('tabLoginBtn');
 const tabRegisterBtn = document.getElementById('tabRegisterBtn');
+const loginView = document.getElementById('loginView');
+const registerView = document.getElementById('registerView');
 const loginForm = document.getElementById('loginForm');
 const registerForm = document.getElementById('registerForm');
 const loginIdentifier = document.getElementById('loginIdentifier');
 const loginPin = document.getElementById('loginPin');
 const loginSubmitBtn = document.getElementById('loginSubmitBtn');
 const regFullName = document.getElementById('regFullName');
-const regEmail = document.getElementById('regEmail');
 const regPin = document.getElementById('regPin');
 const regSubmitBtn = document.getElementById('regSubmitBtn');
 
@@ -83,7 +82,7 @@ const closeReceiptBtn = document.getElementById('closeReceiptBtn');
 const toastContainer = document.getElementById('toast-container');
 
 // ==========================================================================
-// Utility Functions
+// Formatting & Helpers
 // ==========================================================================
 
 function formatRupees(amount) {
@@ -96,11 +95,13 @@ function formatRupees(amount) {
   }).format(num);
 }
 
-function formatCardNumber(accNum) {
+function formatCardDisplay(accNum) {
   if (!accNum) return '•••• •••• •••• ••••';
-  const clean = String(accNum).replace(/\s+/g, '');
-  if (clean.length <= 4) return `•••• •••• •••• ${clean}`;
-  return clean.replace(/(.{4})/g, '$1 ').trim();
+  const clean = String(accNum).replace(/\D/g, '');
+  if (clean.length === 12) {
+    return clean.replace(/(\d{4})(\d{4})(\d{4})/, '$1 $2 $3');
+  }
+  return clean.replace(/(\d{4})/g, '$1 ').trim();
 }
 
 function showToast(message, type = 'info', duration = 4000) {
@@ -136,7 +137,7 @@ function escapeHtml(str) {
 
 function calculateDenominations(amount) {
   if (!amount || amount <= 0 || amount % 100 !== 0) {
-    return 'Dispenser ready: enter an amount in multiples of ₹100';
+    return 'Dispenser ready: select or enter withdrawal amount in multiples of ₹100';
   }
   let remaining = amount;
   const count500 = Math.floor(remaining / 500);
@@ -150,11 +151,46 @@ function calculateDenominations(amount) {
   if (count200 > 0) parts.push(`${count200} × ₹200`);
   if (count100 > 0) parts.push(`${count100} × ₹100`);
 
-  return `Dispenser notes: ${parts.join(', ')}`;
+  return `Dispensing notes: ${parts.join(', ')}`;
+}
+
+// Auto-format card numbers with spaces as typed
+function attachCardNumberFormatter(input) {
+  input.addEventListener('input', (e) => {
+    let value = e.target.value.replace(/\D/g, '');
+    if (value.length > 16) value = value.substring(0, 16);
+    const parts = value.match(/.{1,4}/g);
+    e.target.value = parts ? parts.join(' ') : value;
+  });
+}
+
+attachCardNumberFormatter(loginIdentifier);
+attachCardNumberFormatter(transferTargetInput);
+
+// ==========================================================================
+// Demo Cards Quick-Select
+// ==========================================================================
+
+function initDemoCards() {
+  document.querySelectorAll('.demo-card-item').forEach(card => {
+    card.addEventListener('click', () => {
+      document.querySelectorAll('.demo-card-item').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+
+      const acc = card.getAttribute('data-acc');
+      const pin = card.getAttribute('data-pin');
+
+      loginIdentifier.value = formatCardDisplay(acc);
+      loginPin.value = pin;
+
+      showToast(`Selected demo card: ${card.querySelector('.demo-card-name').textContent}`, 'info', 2000);
+      loginSubmitBtn.focus();
+    });
+  });
 }
 
 // ==========================================================================
-// Authentication & Session Management
+// Authentication & Session
 // ==========================================================================
 
 function getStoredToken() {
@@ -197,8 +233,7 @@ async function checkExistingSession() {
     });
 
     if (res.ok) {
-      const data = await res.json();
-      currentAccount = data;
+      currentAccount = await res.json();
       showDashboardView();
       await fetchTransactions();
     } else {
@@ -231,12 +266,12 @@ function updateDashboardUI() {
   const acc = currentAccount.account || {};
 
   const accNum = acc.accountNumber || '—';
-  const fullName = user.fullName || 'SIMULATED USER';
+  const fullName = user.fullName || 'SIMULATED CARDHOLDER';
   const balance = acc.balance || 0;
 
-  headerAccountNum.textContent = accNum;
-  statAccountNumber.textContent = accNum;
-  cardAccountNumber.textContent = formatCardNumber(accNum);
+  headerAccountNum.textContent = formatCardDisplay(accNum);
+  statAccountNumber.textContent = formatCardDisplay(accNum);
+  cardAccountNumber.textContent = formatCardDisplay(accNum);
   cardHolderName.textContent = fullName.toUpperCase();
   dashboardBalanceDisplay.textContent = formatRupees(balance);
 }
@@ -248,15 +283,15 @@ function updateDashboardUI() {
 tabLoginBtn.addEventListener('click', () => {
   tabLoginBtn.classList.add('active');
   tabRegisterBtn.classList.remove('active');
-  loginForm.style.display = 'block';
-  registerForm.style.display = 'none';
+  loginView.style.display = 'block';
+  registerView.style.display = 'none';
 });
 
 tabRegisterBtn.addEventListener('click', () => {
   tabRegisterBtn.classList.add('active');
   tabLoginBtn.classList.remove('active');
-  registerForm.style.display = 'block';
-  loginForm.style.display = 'none';
+  registerView.style.display = 'block';
+  loginView.style.display = 'none';
 });
 
 document.querySelectorAll('.pin-toggle-btn').forEach(btn => {
@@ -277,8 +312,8 @@ document.querySelectorAll('.pin-toggle-btn').forEach(btn => {
 copyAccountBtn.addEventListener('click', () => {
   if (currentAccount && currentAccount.account) {
     navigator.clipboard.writeText(currentAccount.account.accountNumber)
-      .then(() => showToast('Account number copied to clipboard', 'success', 2500))
-      .catch(() => showToast('Could not copy account number', 'error'));
+      .then(() => showToast('ATM Card Number copied to clipboard', 'success', 2500))
+      .catch(() => showToast('Could not copy card number', 'error'));
   }
 });
 
@@ -293,20 +328,20 @@ logoutBtn.addEventListener('click', async () => {
   }
   clearToken();
   showAuthView();
-  showToast('Logged out securely.', 'info');
+  showToast('ATM Card ejected safely.', 'info');
 });
 
 // ==========================================================================
-// Form Submission: Login
+// Form Submission: Login via Card Number & PIN
 // ==========================================================================
 
 loginForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const emailOrAcc = loginIdentifier.value.trim();
+  const rawAcc = loginIdentifier.value.replace(/\s+/g, '').replace(/-/g, '').trim();
   const pin = loginPin.value.trim();
 
-  if (!emailOrAcc) {
-    showToast('Please enter your email or account number.', 'error');
+  if (!rawAcc || rawAcc.length < 8) {
+    showToast('Please enter a valid ATM Card / Account Number.', 'error');
     return;
   }
   if (!/^\d{6}$/.test(pin)) {
@@ -315,26 +350,26 @@ loginForm.addEventListener('submit', async (e) => {
   }
 
   loginSubmitBtn.disabled = true;
-  loginSubmitBtn.querySelector('span').textContent = 'Authenticating…';
+  loginSubmitBtn.querySelector('span').textContent = 'Reading Card…';
 
   try {
     const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: emailOrAcc, pin: pin })
+      body: JSON.stringify({ accountNumber: rawAcc, pin: pin })
     });
 
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      showToast(data.message || 'Login failed. Verify credentials.', 'error');
+      showToast(data.message || 'Authentication failed. Check card number or PIN.', 'error');
       return;
     }
 
     storeToken(data.sessionToken);
-    showToast('Authentication successful! Welcome to NOIR ATM.', 'success');
+    showToast(`Card Authenticated! Welcome, ${data.fullName || 'Cardholder'}.`, 'success');
 
-    // Fetch full account info
+    // Fetch complete account info
     const accRes = await fetch(`${API_BASE_URL}/api/account`, {
       headers: { 'Authorization': `Bearer ${sessionToken}` }
     });
@@ -353,29 +388,24 @@ loginForm.addEventListener('submit', async (e) => {
     await fetchTransactions();
   } catch (err) {
     console.error('Login error:', err);
-    showToast('Connection error. Could not reach backend server.', 'error');
+    showToast('Communication error with ATM terminal.', 'error');
   } finally {
     loginSubmitBtn.disabled = false;
-    loginSubmitBtn.querySelector('span').textContent = 'Authenticate & Enter ATM';
+    loginSubmitBtn.querySelector('span').textContent = 'Insert Card & Authenticate';
   }
 });
 
 // ==========================================================================
-// Form Submission: Registration
+// Form Submission: Issue New Card (Registration)
 // ==========================================================================
 
 registerForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const fullName = regFullName.value.trim();
-  const email = regEmail.value.trim();
   const pin = regPin.value.trim();
 
   if (!fullName || fullName.length < 2) {
-    showToast('Please enter your full legal name.', 'error');
-    return;
-  }
-  if (!email || !email.includes('@')) {
-    showToast('Please enter a valid email address.', 'error');
+    showToast('Please enter your full legal cardholder name.', 'error');
     return;
   }
   if (!/^\d{6}$/.test(pin)) {
@@ -384,29 +414,30 @@ registerForm.addEventListener('submit', async (e) => {
   }
 
   regSubmitBtn.disabled = true;
-  regSubmitBtn.querySelector('span').textContent = 'Creating Account…';
+  regSubmitBtn.querySelector('span').textContent = 'Embossing Card…';
 
   try {
     const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fullName, email, pin })
+      body: JSON.stringify({ fullName, pin })
     });
 
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      showToast(data.message || 'Registration failed.', 'error');
+      showToast(data.message || 'Card issuance failed.', 'error');
       return;
     }
 
-    showToast(`Account created! Allocated Account No: ${data.accountNumber}. Auto-logging in...`, 'success', 5000);
+    const newAccNum = data.accountNumber;
+    showToast(`New Card Issued: ${formatCardDisplay(newAccNum)} with ₹10,000 balance!`, 'success', 5000);
 
-    // Auto-login newly registered user
+    // Auto-login with the newly issued card
     const loginRes = await fetch(`${API_BASE_URL}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: email, pin: pin })
+      body: JSON.stringify({ accountNumber: newAccNum, pin: pin })
     });
 
     if (loginRes.ok) {
@@ -423,19 +454,20 @@ registerForm.addEventListener('submit', async (e) => {
       await fetchTransactions();
     } else {
       tabLoginBtn.click();
-      loginIdentifier.value = email;
+      loginIdentifier.value = formatCardDisplay(newAccNum);
+      loginPin.value = pin;
     }
   } catch (err) {
     console.error('Registration error:', err);
-    showToast('Could not connect to ATM backend.', 'error');
+    showToast('Failed to communicate with ATM backend.', 'error');
   } finally {
     regSubmitBtn.disabled = false;
-    regSubmitBtn.querySelector('span').textContent = 'Create Account & Claim ₹10,000';
+    regSubmitBtn.querySelector('span').textContent = 'Issue ATM Card & Claim ₹10,000';
   }
 });
 
 // ==========================================================================
-// Operations: Tab Navigation
+// Operations: Tabs
 // ==========================================================================
 
 tabButtons.forEach(btn => {
@@ -458,7 +490,7 @@ refreshBalanceBtn.addEventListener('click', async () => {
   refreshBalanceBtn.disabled = true;
   await refreshAccountBalance();
   refreshBalanceBtn.disabled = false;
-  showToast('Account balance refreshed.', 'info', 2000);
+  showToast('Available balance updated.', 'info', 2000);
 });
 
 async function refreshAccountBalance() {
@@ -503,7 +535,7 @@ withdrawForm.addEventListener('submit', async (e) => {
     return;
   }
   if (amount > 50000) {
-    showToast('Maximum withdrawal limit per transaction is ₹50,000.', 'error');
+    showToast('Maximum ATM cash withdrawal per transaction is ₹50,000.', 'error');
     return;
   }
   if (currentAccount && currentAccount.account && amount > currentAccount.account.balance) {
@@ -533,13 +565,13 @@ withdrawForm.addEventListener('submit', async (e) => {
 
     showToast(`Please collect your simulated cash: ${formatRupees(amount)}`, 'success', 5000);
     withdrawAmountInput.value = '';
-    dispenserText.textContent = 'Dispenser ready: select or enter withdrawal amount';
+    dispenserText.textContent = 'Dispenser ready: select or enter withdrawal amount in multiples of ₹100';
 
     await refreshAccountBalance();
     await fetchTransactions();
   } catch (err) {
     console.error('Withdrawal error:', err);
-    showToast('Failed to communicate with ATM backend.', 'error');
+    showToast('ATM communication error.', 'error');
   } finally {
     withdrawSubmitBtn.disabled = false;
     withdrawSubmitBtn.querySelector('span').textContent = 'Dispense Simulated Cash';
@@ -597,7 +629,7 @@ depositForm.addEventListener('submit', async (e) => {
     await fetchTransactions();
   } catch (err) {
     console.error('Deposit error:', err);
-    showToast('Failed to communicate with ATM backend.', 'error');
+    showToast('ATM communication error.', 'error');
   } finally {
     depositSubmitBtn.disabled = false;
     depositSubmitBtn.querySelector('span').textContent = 'Confirm Cash Deposit';
@@ -610,15 +642,15 @@ depositForm.addEventListener('submit', async (e) => {
 
 transferForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const target = transferTargetInput.value.trim();
+  const target = transferTargetInput.value.replace(/\s+/g, '').replace(/-/g, '').trim();
   const amount = Number(transferAmountInput.value);
 
   if (!target || !/^\d+$/.test(target)) {
-    showToast('Please enter a valid numeric recipient account number.', 'error');
+    showToast('Please enter a valid numeric 12-digit recipient account number.', 'error');
     return;
   }
   if (currentAccount && currentAccount.account && target === currentAccount.account.accountNumber) {
-    showToast('Self-transfer is not permitted. Please enter a different recipient account.', 'error');
+    showToast('Self-transfer is not permitted. Please enter a different recipient card number.', 'error');
     return;
   }
   if (!amount || amount <= 0 || Math.round(amount * 100) !== amount * 100) {
@@ -650,7 +682,7 @@ transferForm.addEventListener('submit', async (e) => {
       return;
     }
 
-    showToast(`Transferred ${formatRupees(amount)} to Account #${target} successfully!`, 'success');
+    showToast(`Transferred ${formatRupees(amount)} to Account #${formatCardDisplay(target)} successfully!`, 'success');
     transferTargetInput.value = '';
     transferAmountInput.value = '';
 
@@ -658,7 +690,7 @@ transferForm.addEventListener('submit', async (e) => {
     await fetchTransactions();
   } catch (err) {
     console.error('Transfer error:', err);
-    showToast('Failed to communicate with ATM backend.', 'error');
+    showToast('ATM communication error.', 'error');
   } finally {
     transferSubmitBtn.disabled = false;
     transferSubmitBtn.querySelector('span').textContent = 'Execute Secure Transfer';
@@ -733,7 +765,7 @@ function renderTransactions() {
     const badgeClass = isCredit ? 'badge-credit' : 'badge-debit';
     const amountClass = isCredit ? 'amount-credit' : 'amount-debit';
     const sign = isCredit ? '+' : '-';
-    const party = tx.relatedAccount ? `A/C #${tx.relatedAccount}` : 'Self / ATM Terminal';
+    const party = tx.relatedAccount ? `A/C #${formatCardDisplay(tx.relatedAccount)}` : 'Self / ATM Dispenser';
 
     html += `
       <tr>
@@ -755,7 +787,6 @@ function renderTransactions() {
 
   transactionTableBody.innerHTML = html;
 
-  // Attach receipt button click handlers
   transactionTableBody.querySelectorAll('.view-rcpt-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = Number(btn.getAttribute('data-id'));
@@ -766,18 +797,18 @@ function renderTransactions() {
 }
 
 // ==========================================================================
-// Receipt Modal Handling
+// Receipt Modal
 // ==========================================================================
 
 function openReceiptModal(tx) {
   rcptTxId.textContent = `#TXN-${String(tx.id).padStart(6, '0')}`;
   rcptDate.textContent = tx.createdAt || new Date().toLocaleString();
-  rcptAccount.textContent = currentAccount && currentAccount.account ? currentAccount.account.accountNumber : '—';
+  rcptAccount.textContent = currentAccount && currentAccount.account ? formatCardDisplay(currentAccount.account.accountNumber) : '—';
   rcptType.textContent = (tx.type || 'TRANSACTION').toUpperCase();
 
   if (tx.relatedAccount) {
     rcptPartyRow.style.display = 'flex';
-    rcptParty.textContent = `#${tx.relatedAccount}`;
+    rcptParty.textContent = `#${formatCardDisplay(tx.relatedAccount)}`;
   } else {
     rcptPartyRow.style.display = 'none';
   }
@@ -800,7 +831,8 @@ printReceiptBtn.addEventListener('click', () => {
   window.print();
 });
 
-// Initialize on load
+// Initialize on DOM load
 document.addEventListener('DOMContentLoaded', () => {
+  initDemoCards();
   checkExistingSession();
 });
