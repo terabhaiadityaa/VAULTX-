@@ -1,3 +1,13 @@
+/**
+ * main.cpp
+ * HTTP REST Server entry point for the NOIR ATM Simulation Platform.
+ *
+ * First-Year CSBS Viva Concept:
+ * - Embedded Server: Uses cpp-httplib to serve static HTML/CSS/JS and JSON REST API endpoints on port 8080.
+ * - Architecture: Controller handles HTTP requests, parses JSON, and delegates business logic to Database/AuthService.
+ * - Security: Pre-routing rate limiting (60s sliding window), security headers, payload size limit, Bearer auth.
+ */
+
 #include <iostream>
 #include <cmath>
 #include <limits>

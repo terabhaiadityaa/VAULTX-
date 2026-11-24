@@ -1,4 +1,14 @@
 
+/**
+ * SessionManager.cpp
+ * In-memory thread-safe session token management with sliding expiration.
+ *
+ * First-Year CSBS Viva Concept:
+ * - 256-bit CSPRNG Tokens: 32 random bytes from OpenSSL RAND_bytes formatted as 64 hex characters.
+ * - Sliding Expiration: 15-minute inactivity window refreshed upon each authenticated request.
+ * - Thread Safety: std::mutex protects concurrent map reads and updates.
+ */
+
 #include "security/SessionManager.h"
 
 #include <openssl/rand.h>

@@ -1,3 +1,13 @@
+/**
+ * Database.cpp
+ * SQLite database operations with atomic transaction consistency and thread safety.
+ *
+ * First-Year CSBS Viva Concept:
+ * - Integer Paise: All balances are stored as 64-bit integers (paise) to prevent IEEE-754 float errors.
+ * - ACID Transactions: Deposits, withdrawals, and transfers use BEGIN IMMEDIATE and COMMIT/ROLLBACK.
+ * - Concurrency Protection: Thread safety is guaranteed via std::mutex dbMutex.
+ */
+
 #include "database/Database.h"
 
 #include <iostream>

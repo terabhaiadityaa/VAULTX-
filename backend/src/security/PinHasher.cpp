@@ -1,4 +1,14 @@
 
+/**
+ * PinHasher.cpp
+ * Cryptographic PIN hashing using PBKDF2-HMAC-SHA256 with OpenSSL.
+ *
+ * First-Year CSBS Viva Concept:
+ * - Slow Hashing: PBKDF2 with 600,000 iterations prevents GPU dictionary & rainbow table attacks.
+ * - Cryptographic Salt: 16 unique random bytes per user prevent identical hashes for the same PIN.
+ * - Constant-Time Comparison: CRYPTO_memcmp prevents side-channel timing attacks.
+ */
+
 #include "security/PinHasher.h"
 
 #include <openssl/evp.h>
