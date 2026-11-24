@@ -1,4 +1,4 @@
-app = "noir-atm-simulation"
+app = "vaultx-banking-simulation"
 primary_region = "iad"
 
 [build]

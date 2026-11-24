@@ -1,6 +1,6 @@
 /**
  * main.cpp
- * HTTP REST Server entry point for the NOIR ATM Simulation Platform.
+ * HTTP REST Server entry point for the VAULTX Banking Simulation Platform.
  *
  * First-Year CSBS Viva Concept:
  * - Embedded Server: Uses cpp-httplib to serve static HTML/CSS/JS and JSON REST API endpoints on port 8080.
@@ -94,10 +94,10 @@ void seedDemoAccounts(Database& database) {
     };
 
     std::vector<DemoCard> demoCards = {
-        {"Aditya Sharma", "aditya@noir.atm", "123456", "100020003000", 7500000, "Platinum VIP"},
-        {"Priya Patel",   "priya@noir.atm",  "654321", "100020004000", 4250000, "Gold Premium"},
-        {"Rahul Verma",   "rahul@noir.atm",  "112233", "100020005000", 15000000, "Business Executive"},
-        {"Simran Kaur",   "simran@noir.atm", "998877", "100020006000", 1800000, "Student Advantage"}
+        {"Aditya Sharma", "aditya@vaultx.sim", "123456", "100020003000", 7500000, "Platinum VIP"},
+        {"Priya Patel",   "priya@vaultx.sim",  "654321", "100020004000", 4250000, "Gold Premium"},
+        {"Rahul Verma",   "rahul@vaultx.sim",  "112233", "100020005000", 15000000, "Business Executive"},
+        {"Simran Kaur",   "simran@vaultx.sim", "998877", "100020006000", 1800000, "Student Advantage"}
     };
 
     for (const auto& card : demoCards) {
@@ -252,7 +252,7 @@ int main() {
     server.Get("/api/health", [](const httplib::Request&, httplib::Response& res) {
         sendJson(res, 200, {
             {"status", "success"},
-            {"message", "ATM Simulation Platform Backend is operational"},
+            {"message", "VAULTX Banking Simulation Backend is operational"},
             {"language", "C++17"},
             {"simulation", true},
             {"currency", "INR"}
@@ -803,7 +803,7 @@ int main() {
     }
 
     std::cout << "\n============================================\n";
-    std::cout << " NOIR — ATM TRANSACTION SIMULATION PLATFORM\n";
+    std::cout << " VAULTX — SECURE ACCESS. SMARTER BANKING.\n";
     std::cout << " (Account-Only ATM Card Authentication)\n";
     std::cout << "============================================\n";
     std::cout << "[INFO] Database: " << dbPath << "\n";

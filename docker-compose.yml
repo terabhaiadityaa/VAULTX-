@@ -5,8 +5,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: noir-atm-simulation:latest
-    container_name: noir-atm-simulation
+    image: vaultx-banking-simulation:latest
+    container_name: vaultx-banking-simulation
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -19,4 +19,4 @@ services:
 
 volumes:
   atm-data:
-    name: noir_atm_data
+    name: vaultx_data

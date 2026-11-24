@@ -1,5 +1,5 @@
 /**
- * NOIR — ATM SIMULATION PLATFORM
+ * VAULTX — Secure Access. Smarter Banking.
  * Client-side Controller & Banking Logic (Account Number & ATM Card Auth)
  */
 
@@ -181,7 +181,7 @@ attachCardNumberFormatter(transferTargetInput);
 
 function getStoredToken() {
   try {
-    return sessionStorage.getItem('noir_token') || null;
+    return sessionStorage.getItem('vaultx_token') || null;
   } catch (_) {
     return null;
   }
@@ -190,7 +190,7 @@ function getStoredToken() {
 function storeToken(token) {
   sessionToken = token;
   try {
-    sessionStorage.setItem('noir_token', token);
+    sessionStorage.setItem('vaultx_token', token);
   } catch (_) {}
 }
 
@@ -199,7 +199,7 @@ function clearToken() {
   currentAccount = null;
   currentTransactions = [];
   try {
-    sessionStorage.removeItem('noir_token');
+    sessionStorage.removeItem('vaultx_token');
     localStorage.removeItem('atmSessionToken'); // Purge any legacy token
   } catch (_) {}
 }

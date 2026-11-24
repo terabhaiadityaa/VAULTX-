@@ -1,4 +1,4 @@
--- ATM Transaction Simulation database schema
+-- VAULTX Banking Simulation database schema
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS users (

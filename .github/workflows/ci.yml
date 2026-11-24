@@ -36,4 +36,4 @@ jobs:
           context: .
           file: ./Dockerfile
           push: false
-          tags: noir-atm-simulation:latest
+          tags: vaultx-banking-simulation:latest

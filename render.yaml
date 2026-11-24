@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: noir-atm-simulation
+    name: vaultx-banking-simulation
     env: docker
     dockerfilePath: Dockerfile
     plan: free

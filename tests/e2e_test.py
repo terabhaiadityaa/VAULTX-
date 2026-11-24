@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NOIR ATM Simulation Platform — Automated End-to-End Test Suite
+VAULTX Banking Simulation Platform — Automated End-to-End Test Suite
 """
 
 import urllib.request
@@ -34,7 +34,7 @@ def run_tests():
 
     # 2. Register User 1
     ts = int(time.time() * 1000)
-    email1 = f"e2e_alice_{ts}@noir.test"
+    email1 = f"e2e_alice_{ts}@vaultx.test"
     st, reg1 = post('/api/auth/register', {
         'fullName': 'Alice Robertson',
         'email': email1,
@@ -45,7 +45,7 @@ def run_tests():
     print(f"  [✓] User 1 registered: {acc1} with initial balance ₹{reg1['initialBalance']}")
 
     # 3. Register User 2
-    email2 = f"e2e_bob_{ts}@noir.test"
+    email2 = f"e2e_bob_{ts}@vaultx.test"
     st, reg2 = post('/api/auth/register', {
         'fullName': 'Bob Robertson',
         'email': email2,

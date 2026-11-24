@@ -1,5 +1,5 @@
 # =========================================================================
-# Multi-Stage Production Dockerfile for NOIR ATM Simulation Platform
+# Multi-Stage Production Dockerfile for VAULTX Banking Simulation Platform
 # C++17 Backend + SQLite Database + Embedded Static Web Frontend
 # =========================================================================
 

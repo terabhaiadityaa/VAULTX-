@@ -49,7 +49,7 @@ def record(name, passed, details=""):
     print(f"[{status}] {name} - {details}")
 
 print("\n" + "="*70)
-print("NOIR ATM SIMULATION — COMPREHENSIVE END-TO-END AUDIT TEST RUNNER")
+print("VAULTX BANKING SIMULATION — COMPREHENSIVE END-TO-END AUDIT TEST RUNNER")
 print("="*70 + "\n")
 
 # 1. Functional: Login with valid credentials & invalid credentials

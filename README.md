@@ -1,4 +1,4 @@
-# NOIR — ATM Transaction Simulation Platform
+# VAULTX — Secure Access. Smarter Banking.
 
 > **SIMULATION ENVIRONMENT — NO REAL MONEY**  
 > An educational ATM and banking simulation platform built with a high-performance C++17 backend, SQLite atomic ledger, and a modern, responsive fintech web frontend. Designed for a 1st-year B.Tech CSBS student practical (viva) examination.

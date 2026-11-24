@@ -76,7 +76,7 @@ AuthResult AuthService::registerUser(
 
     // Auto-generate virtual simulated account identifier if none provided
     if (cleanEmail.empty() || cleanEmail.find('@') == std::string::npos) {
-        cleanEmail = "sim_" + std::to_string(std::time(nullptr)) + "_" + std::to_string(std::rand() % 100000) + "@noir.atm";
+        cleanEmail = "sim_" + std::to_string(std::time(nullptr)) + "_" + std::to_string(std::rand() % 100000) + "@vaultx.sim";
     } else {
         size_t atPos = cleanEmail.find('@');
         if (atPos == 0 || cleanEmail.find('@', atPos + 1) != std::string::npos ||

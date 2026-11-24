@@ -1,4 +1,4 @@
-# REFACTOR & SECURITY AUDIT REPORT: NOIR ATM SIMULATION PLATFORM
+# REFACTOR & SECURITY AUDIT REPORT: VAULTX BANKING SIMULATION PLATFORM
 
 > **Auditor Role:** Senior Software Architect, Security Auditor & Code Reviewer  
 > **Student Target:** First-Year B.Tech Computer Science & Business Systems (CSBS)  
@@ -11,7 +11,7 @@
 
 ## 1. Executive Summary
 
-The **NOIR ATM Transaction Simulation Platform** is a full-stack financial simulation application built with C++17, SQLite3, `cpp-httplib`, and a vanilla JavaScript single-page frontend.
+The **VAULTX Banking Simulation Platform** is a full-stack financial simulation application built with C++17, SQLite3, `cpp-httplib`, and a vanilla JavaScript single-page frontend.
 
 A rigorous, safety-first security audit and refactoring was conducted to prepare the project for practical examination. The primary objectives were achieved with zero compromises:
 - **100% Identical Visuals & User Experience:** Zero visual differences across desktop (1366px) and mobile (375px) viewports.
