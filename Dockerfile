@@ -17,15 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy CMake files and project structure
-COPY CMakeLists.txt ./
-COPY backend/ ./backend/
-COPY database/ ./database/
-COPY tests/ ./tests/
+COPY . .
 
-# Configure and compile with Ninja
-RUN cmake -B build -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
+RUN cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
     && ninja -C build atm_backend
 
 # --- STAGE 2: Minimal Runtime Stage ---
@@ -39,24 +33,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Create persistent storage directory for SQLite database
 RUN mkdir -p /data database
 
-# Copy compiled backend binary
 COPY --from=builder /app/build/backend/atm_backend /app/atm_backend
-
-# Copy database schema and static frontend assets
 COPY database/schema.sql /app/database/schema.sql
 COPY frontend /app/frontend
 
-# Environment variables
 ENV HOST=0.0.0.0
 ENV PORT=8080
 ENV DATABASE_PATH=/data/atm.db
 ENV FRONTEND_DIR=/app/frontend
 
 VOLUME ["/data"]
-
 EXPOSE 8080
 
 CMD ["/app/atm_backend"]

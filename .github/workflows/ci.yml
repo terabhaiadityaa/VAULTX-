@@ -1,4 +1,4 @@
-name: CI & Docker Build Verification
+name: CI Build & Automated Tests
 
 on:
   push:
@@ -16,7 +16,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libsqlite3-dev libssl-dev
+          sudo apt-get install -y cmake ninja-build libsqlite3-dev libssl-dev python3
 
       - name: Configure CMake
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -24,8 +24,11 @@ jobs:
       - name: Build Project
         run: ninja -C build
 
-      - name: Run CTest Test Suite
+      - name: Run CTest Unit Tests
         run: ctest --test-dir build --output-on-failure
 
-      - name: Build Docker Image
-        run: docker build -t vaultx-banking-simulation:latest .
+      - name: Start Background Server & Run End-to-End Tests
+        run: |
+          ./build/backend/atm_backend &
+          sleep 2
+          python3 tests/comprehensive_test.py

@@ -1,5 +1,7 @@
 # VAULTX — Secure Access. Smarter Banking.
 
+[![CI Build & Automated Tests](https://github.com/terabhaiadityaa/VAULTX-/actions/workflows/ci.yml/badge.svg)](https://github.com/terabhaiadityaa/VAULTX-/actions)
+
 > **SIMULATION ENVIRONMENT — NO REAL MONEY**  
 > An educational ATM and banking simulation platform built with a high-performance C++17 backend, SQLite atomic ledger, and a modern, responsive fintech web frontend. Designed for a 1st-year B.Tech CSBS student practical (viva) examination.
 
