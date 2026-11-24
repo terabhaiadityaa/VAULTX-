@@ -26,7 +26,6 @@ COPY tests/ ./tests/
 # Configure and compile with Ninja
 RUN cmake -B build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
-    -DOPENSSL_ROOT_DIR=/usr \
     && ninja -C build atm_backend
 
 # --- STAGE 2: Minimal Runtime Stage ---

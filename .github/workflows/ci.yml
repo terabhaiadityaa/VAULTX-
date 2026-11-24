@@ -27,13 +27,5 @@ jobs:
       - name: Run CTest Test Suite
         run: ctest --test-dir build --output-on-failure
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Build Docker Image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: false
-          tags: vaultx-banking-simulation:latest
+        run: docker build -t vaultx-banking-simulation:latest .
