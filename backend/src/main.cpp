@@ -96,9 +96,6 @@ bool parseRupeesToPaise(
 }
 
 void seedDemoAccounts(Database& database) {
-    sqlite3* db = database.getConnection();
-    if (!db) return;
-
     struct DemoCard {
         std::string name;
         std::string email;
@@ -116,85 +113,53 @@ void seedDemoAccounts(Database& database) {
     };
 
     for (const auto& card : demoCards) {
-        sqlite3_stmt* checkStmt = nullptr;
-        if (sqlite3_prepare_v2(db, "SELECT id FROM accounts WHERE account_number = ?;", -1, &checkStmt, nullptr) == SQLITE_OK) {
-            sqlite3_bind_text(checkStmt, 1, card.accountNum.c_str(), -1, SQLITE_TRANSIENT);
-            if (sqlite3_step(checkStmt) == SQLITE_ROW) {
-                sqlite3_finalize(checkStmt);
-                continue; // Already seeded
-            }
-            sqlite3_finalize(checkStmt);
+        // Non-destructive: skip if this demo account already exists in PostgreSQL
+        if (database.accountExists(card.accountNum)) {
+            continue;
         }
 
         std::string hashedPin = PinHasher::hashPin(card.pin);
         if (hashedPin.empty()) continue;
 
-        sqlite3_stmt* userStmt = nullptr;
-        if (sqlite3_prepare_v2(db, "INSERT INTO users (full_name, email, pin_hash) VALUES (?, ?, ?);", -1, &userStmt, nullptr) == SQLITE_OK) {
-            sqlite3_bind_text(userStmt, 1, card.name.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(userStmt, 2, card.email.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(userStmt, 3, hashedPin.c_str(), -1, SQLITE_TRANSIENT);
-            if (sqlite3_step(userStmt) != SQLITE_DONE) {
-                sqlite3_finalize(userStmt);
-                continue;
-            }
-            sqlite3_finalize(userStmt);
-        }
-
-        sqlite3_int64 userId = sqlite3_last_insert_rowid(db);
-
-        sqlite3_stmt* accStmt = nullptr;
-        sqlite3_int64 accId = 0;
-        if (sqlite3_prepare_v2(db, "INSERT INTO accounts (user_id, account_number, balance_paise, status) VALUES (?, ?, ?, 'active');", -1, &accStmt, nullptr) == SQLITE_OK) {
-            sqlite3_bind_int64(accStmt, 1, userId);
-            sqlite3_bind_text(accStmt, 2, card.accountNum.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_int64(accStmt, 3, card.balancePaise);
-            if (sqlite3_step(accStmt) == SQLITE_DONE) {
-                accId = sqlite3_last_insert_rowid(db);
-            }
-            sqlite3_finalize(accStmt);
-        }
-
-        if (accId > 0) {
-            sqlite3_stmt* txStmt = nullptr;
-            const char* txSql = "INSERT INTO transactions (account_id, transaction_type, amount_paise, description) VALUES (?, 'deposit', ?, ?);";
-            if (sqlite3_prepare_v2(db, txSql, -1, &txStmt, nullptr) == SQLITE_OK) {
-                sqlite3_bind_int64(txStmt, 1, accId);
-                sqlite3_bind_int64(txStmt, 2, card.balancePaise);
-                std::string desc = "Initial simulated balance allocation (" + card.tier + ")";
-                sqlite3_bind_text(txStmt, 3, desc.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_step(txStmt);
-                sqlite3_finalize(txStmt);
-            }
-        }
+        std::string desc = "Initial simulated balance allocation (" + card.tier + ")";
+        database.createCardAccount(
+            card.name,
+            card.email,
+            hashedPin,
+            card.accountNum,
+            card.balancePaise,
+            desc
+        );
     }
 }
 
 } // namespace
 
 int main() {
-    // Determine database path from environment or default
-    const char* envDbPath = std::getenv("DATABASE_PATH");
-    std::string dbPath = envDbPath ? envDbPath : "database/atm.db";
+    // Read PostgreSQL connection URI from environment variable (never hardcoded)
+    const char* envDbUrl = std::getenv("DATABASE_URL");
+    if (!envDbUrl || std::string(envDbUrl).empty()) {
+        envDbUrl = std::getenv("SUPABASE_DB_URL");
+    }
+    if (!envDbUrl || std::string(envDbUrl).empty()) {
+        std::cerr << "[ERROR] DATABASE_URL environment variable is not set." << std::endl;
+        std::cerr << "        Set DATABASE_URL to your Supabase PostgreSQL URI and restart." << std::endl;
+        return 1;
+    }
 
     Database database;
-    if (!database.connect(dbPath)) {
-        std::cerr << "Could not connect to ATM database at: " << dbPath << std::endl;
+    if (!database.connect(envDbUrl)) {
+        std::cerr << "Could not connect to PostgreSQL (Supabase) database." << std::endl;
         return 1;
     }
 
-    // Determine schema path
-    std::string schemaPath = "database/schema.sql";
-    if (!std::filesystem::exists(schemaPath) && std::filesystem::exists("../database/schema.sql")) {
-        schemaPath = "../database/schema.sql";
-    }
-
-    if (!database.initializeSchema(schemaPath)) {
-        std::cerr << "Database initialization failed with schema: " << schemaPath << std::endl;
+    // Non-destructively verify production schema exists (never drops/truncates/overwrites)
+    if (!database.verifySchema()) {
+        std::cerr << "PostgreSQL schema verification failed." << std::endl;
         return 1;
     }
 
-    // Seed realistic demo simulation accounts
+    // Seed demo accounts only if missing (existing records are preserved untouched)
     seedDemoAccounts(database);
 
     AuthService authService(database);
@@ -275,11 +240,20 @@ int main() {
     });
 
     // Database health check
-    server.Get("/api/health/db", [](const httplib::Request&, httplib::Response& res) {
-        sendJson(res, 200, {
-            {"status", "success"},
-            {"message", "SQLite database is connected and initialized"}
-        });
+    server.Get("/api/health/db", [&database](const httplib::Request&, httplib::Response& res) {
+        if (database.isConnected()) {
+            sendJson(res, 200, {
+                {"status", "success"},
+                {"database", "PostgreSQL (Supabase)"},
+                {"message", "PostgreSQL (Supabase) database is connected and operational"}
+            });
+        } else {
+            sendJson(res, 503, {
+                {"status", "error"},
+                {"database", "PostgreSQL (Supabase)"},
+                {"message", "PostgreSQL database connection unavailable"}
+            });
+        }
     });
 
     // Pre-configured simulated demo accounts
@@ -821,7 +795,7 @@ int main() {
     std::cout << " VAULTX — SECURE ACCESS. SMARTER BANKING.\n";
     std::cout << " (Account-Only ATM Card Authentication)\n";
     std::cout << "============================================\n";
-    std::cout << "[INFO] Database: " << dbPath << "\n";
+    std::cout << "[INFO] Database: PostgreSQL (Supabase via libpqxx)\n";
     std::cout << "[INFO] Listening on: http://" << host << ":" << port << "\n";
     std::cout << "[INFO] Endpoints active:\n";
     std::cout << "  GET  /api/health\n";

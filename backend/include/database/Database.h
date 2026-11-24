@@ -1,8 +1,9 @@
 #ifndef DATABASE_H
 #define DATABASE_H
 
-#include <sqlite3.h>
+#include <pqxx/pqxx>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -24,7 +25,7 @@ struct OperationResult {
 struct AccountDetails {
     bool found = false;
     int userId = -1;
-    sqlite3_int64 accountId = 0;
+    std::int64_t accountId = 0;
     std::string fullName;
     std::string email;
     std::string accountNumber;
@@ -34,7 +35,7 @@ struct AccountDetails {
 };
 
 struct TransactionItem {
-    sqlite3_int64 id = 0;
+    std::int64_t id = 0;
     std::string type;
     std::string direction; // "credit" or "debit"
     std::int64_t amountPaise = 0;
@@ -43,10 +44,34 @@ struct TransactionItem {
     std::string createdAt;
 };
 
+struct RegistrationResult {
+    bool success = false;
+    bool duplicateEmail = false;
+    bool duplicateAccount = false;
+    std::string message;
+    int userId = -1;
+};
+
+struct UserAuthRecord {
+    bool found = false;
+    int userId = -1;
+    std::string pinHash;
+};
+
+struct AccountLoginStatus {
+    bool found = false;
+    std::string accountNumber;
+    std::string status;
+};
+
 class Database {
 private:
-    sqlite3* db;
+    std::string connectionString;
+    std::unique_ptr<pqxx::connection> conn;
     std::mutex dbMutex;
+
+    // Must be called with dbMutex locked. Reconnects cleanly if Supabase dropped an idle socket.
+    bool ensureConnected();
 
 public:
     Database();
@@ -55,14 +80,39 @@ public:
     Database(const Database&) = delete;
     Database& operator=(const Database&) = delete;
 
-    bool connect(const std::string& dbPath);
+    bool connect(const std::string& connUrl);
     void disconnect();
+    bool isConnected();
 
-    bool execute(const std::string& sql);
-    bool initializeSchema(const std::string& schemaPath);
+    // Non-destructively verifies that required production tables exist in public schema.
+    bool verifySchema();
 
-    sqlite3* getConnection();
     std::mutex& getMutex();
+
+    // Checks whether an account number already exists.
+    bool accountExists(const std::string& accountNumber);
+
+    // Atomically creates a user, active account, and welcome deposit ledger entry.
+    RegistrationResult createCardAccount(
+        const std::string& fullName,
+        const std::string& email,
+        const std::string& pinHash,
+        const std::string& accountNumber,
+        std::int64_t initialBalancePaise,
+        const std::string& depositDescription
+    );
+
+    // Brute-force login attempt helpers.
+    std::int64_t getLoginLockUntil(const std::string& identifier);
+    void clearLoginAttempts(const std::string& identifier);
+    bool recordFailedLoginAttempt(
+        const std::string& identifier,
+        int maxAttempts,
+        std::int64_t lockUntilEpoch,
+        std::int64_t currentEpoch
+    );
+    UserAuthRecord findUserForLogin(const std::string& identifier);
+    AccountLoginStatus findAccountForUser(int userId);
 
     // Returns the active account number belonging to this authenticated user.
     std::string getAccountNumberForUser(int userId);
@@ -84,7 +134,7 @@ public:
 
     // Retrieve recent transaction history for an account.
     std::vector<TransactionItem> getTransactionHistory(
-        sqlite3_int64 accountId,
+        std::int64_t accountId,
         int limit = 50
     );
 
