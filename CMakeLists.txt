@@ -1,7 +1,7 @@
 
 cmake_minimum_required(VERSION 3.20)
 
-project(ATM_Transaction_Simulation
+project(VAULTX_Banking_Simulation
     VERSION 1.0
     LANGUAGES CXX
 )

@@ -297,7 +297,7 @@ document.querySelectorAll('.pin-toggle-btn').forEach(btn => {
 copyAccountBtn.addEventListener('click', () => {
   if (currentAccount && currentAccount.account) {
     navigator.clipboard.writeText(currentAccount.account.accountNumber)
-      .then(() => showToast('ATM Card Number copied to clipboard', 'success', 2500))
+      .then(() => showToast('VAULTX Card Number copied to clipboard', 'success', 2500))
       .catch(() => showToast('Could not copy card number', 'error'));
   }
 });
@@ -313,7 +313,7 @@ logoutBtn.addEventListener('click', async () => {
   }
   clearToken();
   showAuthView();
-  showToast('ATM Card ejected safely.', 'info');
+  showToast('VAULTX Card ejected safely.', 'info');
 });
 
 // ==========================================================================
@@ -326,7 +326,7 @@ loginForm.addEventListener('submit', async (e) => {
   const pin = loginPin.value.trim();
 
   if (!rawAcc || rawAcc.length < 8) {
-    showToast('Please enter a valid ATM Card / Account Number.', 'error');
+    showToast('Please enter a valid VAULTX Card / Account Number.', 'error');
     return;
   }
   if (!/^\d{6}$/.test(pin)) {
@@ -373,7 +373,7 @@ loginForm.addEventListener('submit', async (e) => {
     await fetchTransactions();
   } catch (err) {
     console.error('Login error:', err);
-    showToast('Communication error with ATM terminal.', 'error');
+    showToast('Communication error with VAULTX terminal.', 'error');
   } finally {
     loginSubmitBtn.disabled = false;
     loginSubmitBtn.querySelector('span').textContent = 'Insert Card & Authenticate';
@@ -444,10 +444,10 @@ registerForm.addEventListener('submit', async (e) => {
     }
   } catch (err) {
     console.error('Registration error:', err);
-    showToast('Failed to communicate with ATM backend.', 'error');
+    showToast('Failed to communicate with VAULTX backend.', 'error');
   } finally {
     regSubmitBtn.disabled = false;
-    regSubmitBtn.querySelector('span').textContent = 'Issue ATM Card & Claim ₹10,000';
+    regSubmitBtn.querySelector('span').textContent = 'Issue VAULTX Card & Claim ₹10,000';
   }
 });
 
@@ -520,7 +520,7 @@ withdrawForm.addEventListener('submit', async (e) => {
     return;
   }
   if (amount > 50000) {
-    showToast('Maximum ATM cash withdrawal per transaction is ₹50,000.', 'error');
+    showToast('Maximum cash withdrawal per transaction is ₹50,000.', 'error');
     return;
   }
   if (currentAccount && currentAccount.account && amount > currentAccount.account.balance) {
@@ -556,7 +556,7 @@ withdrawForm.addEventListener('submit', async (e) => {
     await fetchTransactions();
   } catch (err) {
     console.error('Withdrawal error:', err);
-    showToast('ATM communication error.', 'error');
+    showToast('VAULTX communication error.', 'error');
   } finally {
     withdrawSubmitBtn.disabled = false;
     withdrawSubmitBtn.querySelector('span').textContent = 'Dispense Simulated Cash';
@@ -614,7 +614,7 @@ depositForm.addEventListener('submit', async (e) => {
     await fetchTransactions();
   } catch (err) {
     console.error('Deposit error:', err);
-    showToast('ATM communication error.', 'error');
+    showToast('VAULTX communication error.', 'error');
   } finally {
     depositSubmitBtn.disabled = false;
     depositSubmitBtn.querySelector('span').textContent = 'Confirm Cash Deposit';
@@ -675,7 +675,7 @@ transferForm.addEventListener('submit', async (e) => {
     await fetchTransactions();
   } catch (err) {
     console.error('Transfer error:', err);
-    showToast('ATM communication error.', 'error');
+    showToast('VAULTX communication error.', 'error');
   } finally {
     transferSubmitBtn.disabled = false;
     transferSubmitBtn.querySelector('span').textContent = 'Execute Secure Transfer';
@@ -750,7 +750,7 @@ function renderTransactions() {
     const badgeClass = isCredit ? 'badge-credit' : 'badge-debit';
     const amountClass = isCredit ? 'amount-credit' : 'amount-debit';
     const sign = isCredit ? '+' : '-';
-    const party = tx.relatedAccount ? `A/C #${formatCardDisplay(tx.relatedAccount)}` : 'Self / ATM Dispenser';
+    const party = tx.relatedAccount ? `A/C #${formatCardDisplay(tx.relatedAccount)}` : 'Self / VAULTX Dispenser';
 
     const tr = document.createElement('tr');
 
