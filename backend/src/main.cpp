@@ -38,6 +38,21 @@ std::string extractBearerToken(const httplib::Request& req) {
     return "";
 }
 
+std::string getClientIp(const httplib::Request& req) {
+    if (req.has_header("CF-Connecting-IP")) {
+        return req.get_header_value("CF-Connecting-IP");
+    }
+    if (req.has_header("X-Forwarded-For")) {
+        std::string xff = req.get_header_value("X-Forwarded-For");
+        size_t comma = xff.find(',');
+        if (comma != std::string::npos) {
+            return xff.substr(0, comma);
+        }
+        return xff;
+    }
+    return req.remote_addr;
+}
+
 void sendJson(httplib::Response& res, int status, const json& body) {
     res.status = status;
     res.set_header("Content-Type", "application/json");
@@ -185,7 +200,7 @@ int main() {
     AuthService authService(database);
     SessionManager sessionManager;
     RateLimiter generalLimiter(120, std::chrono::seconds(60));
-    RateLimiter authLimiter(20, std::chrono::seconds(60));
+    RateLimiter authLimiter(30, std::chrono::seconds(60));
 
     httplib::Server server;
 
@@ -205,7 +220,7 @@ int main() {
 
         // Apply sliding-window rate limiting to API endpoints
         if (req.path.rfind("/api/", 0) == 0) {
-            std::string clientIp = req.remote_addr;
+            std::string clientIp = getClientIp(req);
             bool allowed = true;
             if (req.path == "/api/auth/login" || req.path == "/api/auth/register") {
                 allowed = authLimiter.allow(clientIp);

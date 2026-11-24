@@ -137,8 +137,8 @@ with urllib.request.urlopen(req) as resp:
 
 # 10. Security Regression: Rate Limiting
 rate_limited = False
-for i in range(25):
-    c, r = request('POST', '/api/auth/login', {'accountNumber': '999999999999', 'pin': '000000'})
+for i in range(35):
+    c, r = request('POST', '/api/auth/login', {'accountNumber': '999999999999', 'pin': '000000'}, headers={'X-Forwarded-For': '198.51.100.1'})
     if c == 429:
         rate_limited = True
         break
