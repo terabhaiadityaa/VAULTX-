@@ -4,6 +4,7 @@ add_executable(atm_backend
     src/database/Database.cpp
     src/security/PinHasher.cpp
     src/security/SessionManager.cpp
+    src/security/RateLimiter.cpp
     src/services/AuthService.cpp
 )
 

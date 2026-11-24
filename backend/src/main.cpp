@@ -13,6 +13,7 @@
 #include "services/AuthService.h"
 #include "security/SessionManager.h"
 #include "security/PinHasher.h"
+#include "security/RateLimiter.h"
 
 using json = nlohmann::json;
 
@@ -30,9 +31,43 @@ std::string extractBearerToken(const httplib::Request& req) {
 void sendJson(httplib::Response& res, int status, const json& body) {
     res.status = status;
     res.set_header("Content-Type", "application/json");
-    res.set_header("Access-Control-Allow-Origin", "*");
-    res.set_header("Cache-Control", "no-store");
+    res.set_header("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.set_header("X-Content-Type-Options", "nosniff");
+    res.set_header("X-Frame-Options", "DENY");
+    res.set_header("Referrer-Policy", "strict-origin-when-cross-origin");
     res.set_content(body.dump(4), "application/json");
+}
+
+bool parseRupeesToPaise(
+    const json& request,
+    std::int64_t& outPaise,
+    std::string& errorMessage,
+    long double maxRupees = 10000000.0L
+) {
+    if (!request.is_object() || !request.contains("amount") || !request["amount"].is_number()) {
+        errorMessage = "Amount is required and must be a number.";
+        return false;
+    }
+
+    const long double amountRupees = request["amount"].get<long double>();
+    if (!std::isfinite(amountRupees) || amountRupees <= 0.0L) {
+        errorMessage = "Amount must be a positive number.";
+        return false;
+    }
+
+    if (amountRupees > maxRupees) {
+        errorMessage = "Amount exceeds maximum allowable transaction limit.";
+        return false;
+    }
+
+    const long double paiseValue = std::round(amountRupees * 100.0L);
+    if (std::fabs(paiseValue - amountRupees * 100.0L) > 0.000001L) {
+        errorMessage = "Amount cannot have more than two decimal places.";
+        return false;
+    }
+
+    outPaise = static_cast<std::int64_t>(paiseValue);
+    return true;
 }
 
 void seedDemoAccounts(Database& database) {
@@ -139,11 +174,16 @@ int main() {
 
     AuthService authService(database);
     SessionManager sessionManager;
+    RateLimiter generalLimiter(120, std::chrono::seconds(60));
+    RateLimiter authLimiter(20, std::chrono::seconds(60));
 
     httplib::Server server;
 
-    // Global CORS preflight & headers
-    server.set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
+    // Security: Request payload limit (64 KB maximum to prevent memory exhaustion / DoS)
+    server.set_payload_max_length(64 * 1024);
+
+    // Global CORS preflight, Security Headers, and IP Rate Limiting
+    server.set_pre_routing_handler([&generalLimiter, &authLimiter](const httplib::Request& req, httplib::Response& res) {
         if (req.method == "OPTIONS") {
             res.status = 204;
             res.set_header("Access-Control-Allow-Origin", "*");
@@ -152,12 +192,35 @@ int main() {
             res.set_header("Access-Control-Max-Age", "86400");
             return httplib::Server::HandlerResponse::Handled;
         }
+
+        // Apply sliding-window rate limiting to API endpoints
+        if (req.path.rfind("/api/", 0) == 0) {
+            std::string clientIp = req.remote_addr;
+            bool allowed = true;
+            if (req.path == "/api/auth/login" || req.path == "/api/auth/register") {
+                allowed = authLimiter.allow(clientIp);
+            } else {
+                allowed = generalLimiter.allow(clientIp);
+            }
+
+            if (!allowed) {
+                sendJson(res, 429, {
+                    {"status", "error"},
+                    {"message", "Too many requests. Please wait a moment and try again."}
+                });
+                return httplib::Server::HandlerResponse::Handled;
+            }
+        }
+
         return httplib::Server::HandlerResponse::Unhandled;
     });
 
     server.set_post_routing_handler([](const httplib::Request&, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
         res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        res.set_header("X-Content-Type-Options", "nosniff");
+        res.set_header("X-Frame-Options", "DENY");
+        res.set_header("Referrer-Policy", "strict-origin-when-cross-origin");
     });
 
     // Mount static frontend directory
@@ -444,32 +507,16 @@ int main() {
 
         try {
             json request = json::parse(req.body);
-            if (!request.is_object() || !request.contains("amount") || !request["amount"].is_number()) {
-                sendJson(res, 400, {
-                    {"status", "error"},
-                    {"message", "Deposit amount is required and must be a number."}
-                });
-                return;
-            }
+            std::int64_t amountPaise = 0;
+            std::string err;
 
-            long double amountRupees = request["amount"].get<long double>();
-            if (!std::isfinite(amountRupees) || amountRupees <= 0.0L || amountRupees > 10000000.0L) {
+            if (!parseRupeesToPaise(request, amountPaise, err, 10000000.0L)) {
                 sendJson(res, 400, {
                     {"status", "error"},
-                    {"message", "Deposit amount must be between ₹1 and ₹1,00,00,000."}
+                    {"message", err}
                 });
                 return;
             }
-
-            long double paiseValue = std::round(amountRupees * 100.0L);
-            if (std::fabs(paiseValue - amountRupees * 100.0L) > 0.000001L) {
-                sendJson(res, 400, {
-                    {"status", "error"},
-                    {"message", "Amount cannot have more than two decimal places."}
-                });
-                return;
-            }
-            std::int64_t amountPaise = static_cast<std::int64_t>(paiseValue);
 
             std::string accountNumber = database.getAccountNumberForUser(userId);
             if (accountNumber.empty()) {
@@ -520,16 +567,10 @@ int main() {
 
         try {
             json request = json::parse(req.body);
-            if (!request.is_object() || !request.contains("amount") || !request["amount"].is_number()) {
-                sendJson(res, 400, {
-                    {"status", "error"},
-                    {"message", "Withdrawal amount is required and must be a number."}
-                });
-                return;
-            }
+            std::int64_t amountPaise = 0;
+            std::string err;
 
-            long double amountRupees = request["amount"].get<long double>();
-            if (!std::isfinite(amountRupees) || amountRupees <= 0.0L || amountRupees > 50000.0L) {
+            if (!parseRupeesToPaise(request, amountPaise, err, 50000.0L)) {
                 sendJson(res, 400, {
                     {"status", "error"},
                     {"message", "ATM withdrawal amount must be between ₹100 and ₹50,000 per transaction."}
@@ -537,17 +578,7 @@ int main() {
                 return;
             }
 
-            long double paiseValue = std::round(amountRupees * 100.0L);
-            if (std::fabs(paiseValue - amountRupees * 100.0L) > 0.000001L) {
-                sendJson(res, 400, {
-                    {"status", "error"},
-                    {"message", "Withdrawal amount must be whole rupees in multiples of ₹100."}
-                });
-                return;
-            }
-            std::int64_t amountPaise = static_cast<std::int64_t>(paiseValue);
-
-            if (amountPaise % 10000 != 0) {
+            if (amountPaise < 10000 || amountPaise % 10000 != 0) {
                 sendJson(res, 400, {
                     {"status", "error"},
                     {"message", "ATM cash withdrawal must be in multiples of ₹100 notes."}
@@ -628,8 +659,6 @@ int main() {
                 targetAccount.end()
             );
 
-            const long double amountRupees = request["amount"].get<long double>();
-
             if (targetAccount.empty() || targetAccount.size() > 32 ||
                 !std::all_of(targetAccount.begin(), targetAccount.end(), [](unsigned char c) { return std::isdigit(c); })) {
                 sendJson(res, 400, {
@@ -639,24 +668,15 @@ int main() {
                 return;
             }
 
-            if (!std::isfinite(amountRupees) || amountRupees <= 0.0L ||
-                amountRupees > static_cast<long double>(std::numeric_limits<std::int64_t>::max()) / 100.0L) {
+            std::int64_t amountPaise = 0;
+            std::string err;
+            if (!parseRupeesToPaise(request, amountPaise, err, 10000000.0L)) {
                 sendJson(res, 400, {
                     {"status", "error"},
-                    {"message", "Transfer amount must be a positive number."}
+                    {"message", err}
                 });
                 return;
             }
-
-            const long double paiseValue = std::round(amountRupees * 100.0L);
-            if (std::fabs(paiseValue - amountRupees * 100.0L) > 0.000001L) {
-                sendJson(res, 400, {
-                    {"status", "error"},
-                    {"message", "Amount cannot have more than two decimal places."}
-                });
-                return;
-            }
-            const auto amountPaise = static_cast<std::int64_t>(paiseValue);
 
             const std::string senderAccount = database.getAccountNumberForUser(userId);
             if (senderAccount.empty()) {

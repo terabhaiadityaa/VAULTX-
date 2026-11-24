@@ -107,15 +107,21 @@ function formatCardDisplay(accNum) {
 function showToast(message, type = 'info', duration = 4000) {
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
-  toast.innerHTML = `
-    <span class="toast-message">${escapeHtml(message)}</span>
-    <button class="toast-close" title="Dismiss">&times;</button>
-  `;
 
-  toast.querySelector('.toast-close').addEventListener('click', () => {
+  const messageSpan = document.createElement('span');
+  messageSpan.className = 'toast-message';
+  messageSpan.textContent = String(message);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'toast-close';
+  closeBtn.title = 'Dismiss';
+  closeBtn.textContent = '×';
+  closeBtn.addEventListener('click', () => {
     toast.remove();
   });
 
+  toast.appendChild(messageSpan);
+  toast.appendChild(closeBtn);
   toastContainer.appendChild(toast);
 
   setTimeout(() => {
@@ -175,7 +181,7 @@ attachCardNumberFormatter(transferTargetInput);
 
 function getStoredToken() {
   try {
-    return sessionStorage.getItem('noir_token') || localStorage.getItem('atmSessionToken') || null;
+    return sessionStorage.getItem('noir_token') || null;
   } catch (_) {
     return null;
   }
@@ -185,7 +191,6 @@ function storeToken(token) {
   sessionToken = token;
   try {
     sessionStorage.setItem('noir_token', token);
-    localStorage.setItem('atmSessionToken', token);
   } catch (_) {}
 }
 
@@ -195,7 +200,7 @@ function clearToken() {
   currentTransactions = [];
   try {
     sessionStorage.removeItem('noir_token');
-    localStorage.removeItem('atmSessionToken');
+    localStorage.removeItem('atmSessionToken'); // Purge any legacy token
   } catch (_) {}
 }
 
@@ -739,7 +744,7 @@ function renderTransactions() {
     return;
   }
 
-  let html = '';
+  transactionTableBody.textContent = '';
   filtered.forEach(tx => {
     const isCredit = tx.direction === 'credit';
     const badgeClass = isCredit ? 'badge-credit' : 'badge-debit';
@@ -747,32 +752,46 @@ function renderTransactions() {
     const sign = isCredit ? '+' : '-';
     const party = tx.relatedAccount ? `A/C #${formatCardDisplay(tx.relatedAccount)}` : 'Self / ATM Dispenser';
 
-    html += `
-      <tr>
-        <td>${escapeHtml(tx.createdAt || 'Just now')}</td>
-        <td>
-          <span class="tx-badge ${badgeClass}">${escapeHtml(tx.type || 'TX')}</span>
-          <span style="margin-left: 8px;">${escapeHtml(tx.description || '')}</span>
-        </td>
-        <td>${escapeHtml(party)}</td>
-        <td class="${amountClass}">${sign} ${formatRupees(tx.amount)}</td>
-        <td>
-          <button class="action-icon-btn view-rcpt-btn" data-id="${tx.id}">
-            Receipt
-          </button>
-        </td>
-      </tr>
-    `;
-  });
+    const tr = document.createElement('tr');
 
-  transactionTableBody.innerHTML = html;
+    // 1. Timestamp
+    const tdTime = document.createElement('td');
+    tdTime.textContent = tx.createdAt || 'Just now';
+    tr.appendChild(tdTime);
 
-  transactionTableBody.querySelectorAll('.view-rcpt-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id = Number(btn.getAttribute('data-id'));
-      const tx = currentTransactions.find(t => t.id === id);
-      if (tx) openReceiptModal(tx);
-    });
+    // 2. Type badge and description
+    const tdDesc = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = `tx-badge ${badgeClass}`;
+    badge.textContent = tx.type || 'TX';
+    const descText = document.createElement('span');
+    descText.style.marginLeft = '8px';
+    descText.textContent = tx.description || '';
+    tdDesc.appendChild(badge);
+    tdDesc.appendChild(descText);
+    tr.appendChild(tdDesc);
+
+    // 3. Related Account / Party
+    const tdParty = document.createElement('td');
+    tdParty.textContent = party;
+    tr.appendChild(tdParty);
+
+    // 4. Formatted Amount
+    const tdAmount = document.createElement('td');
+    tdAmount.className = amountClass;
+    tdAmount.textContent = `${sign} ${formatRupees(tx.amount)}`;
+    tr.appendChild(tdAmount);
+
+    // 5. Thermal Receipt Button
+    const tdAction = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.className = 'action-icon-btn view-rcpt-btn';
+    btn.textContent = 'Receipt';
+    btn.addEventListener('click', () => openReceiptModal(tx));
+    tdAction.appendChild(btn);
+    tr.appendChild(tdAction);
+
+    transactionTableBody.appendChild(tr);
   });
 }
 
