@@ -1,16 +1,14 @@
 # NOIR — ATM Transaction Simulation Platform
 
-[![CI & Docker Build Verification](https://github.com/Chandreshh404/ATM-Transaction-Simulation/actions/workflows/ci.yml/badge.svg)](https://github.com/Chandreshh404/ATM-Transaction-Simulation/actions)
-
 > **SIMULATION ENVIRONMENT — NO REAL MONEY**  
-> An educational ATM and banking simulation platform built with a high-performance C++17 backend, SQLite atomic ledger, and a modern, responsive fintech web frontend.
+> An educational ATM and banking simulation platform built with a high-performance C++17 backend, SQLite atomic ledger, and a modern, responsive fintech web frontend. Designed for a 1st-year B.Tech CSBS student practical (viva) examination.
 
 ---
 
-## 🌐 Live Website
+## 📖 Architectural Documentation & Viva Guide
 
-- **Public HTTPS URL:** [https://d8e5c07318c2267b-106-222-218-80.serveousercontent.com](https://d8e5c07318c2267b-106-222-218-80.serveousercontent.com)
-- **Local Server:** `http://localhost:8080`
+For complete technical specifications, security audit findings, before vs. after refactor metrics, and an in-depth **Viva Examination Guide (with 10 questions and plain-English answers)**, see:
+- 📄 **[REFACTOR_REPORT.md](REFACTOR_REPORT.md)**
 
 ---
 
@@ -25,18 +23,18 @@
 - **Atomic Fund Transfers:** Thread-safe, atomic account-to-account transfers with self-transfer prevention, balance validation, and double-entry ledger records.
 - **Transaction Passbook & Filter:** Filter transactions by All, Credits, and Debits with directional indicators.
 - **Thermal ATM Receipt Printing:** Printable transaction receipt modal with terminal ID, timestamp, and transaction reference numbers.
-- **Production Containerization:** Multi-stage Dockerfile and deployment configurations for Render, Fly.io, and Docker Compose.
+- **Security & Reliability:** In-memory sliding-window rate limiting, HTTP security headers (`nosniff`, `DENY`), client payload limits (64KB), and atomic SQLite transactions (`BEGIN IMMEDIATE TRANSACTION`).
 
 ---
 
 ## 🛠️ Architecture & Technology Stack
 
-- **Backend:** C++17
-- **HTTP Server:** `cpp-httplib` (embedded header-only HTTP/HTTPS server)
-- **JSON Parser:** `nlohmann/json` (v3.11.3)
-- **Database:** SQLite3 with atomic transactions (`BEGIN IMMEDIATE TRANSACTION`) and WAL mode
-- **Security:** OpenSSL 3.x PBKDF2-HMAC-SHA256 for 6-digit PIN hashing; high-entropy token-based session management
-- **Frontend:** HTML5, CSS3, Vanilla JavaScript (ES6+) with zero heavy framework bloat
+- **Backend:** C++17 (`std::int64_t` paise monetary precision, `std::mutex` concurrency control)
+- **HTTP Server:** `cpp-httplib` (embedded header-only HTTP server)
+- **JSON Parser:** `nlohmann/json` (modern C++ JSON library)
+- **Database:** SQLite3 with atomic transactions and WAL (Write-Ahead Logging) mode
+- **Security:** OpenSSL 3.x PBKDF2-HMAC-SHA256 for PIN hashing; 256-bit CSPRNG hex session tokens
+- **Frontend:** Vanilla HTML5, CSS3, ES6+ JavaScript (zero external UI dependencies)
 - **Build System:** CMake (>= 3.16) and Ninja
 
 ---
@@ -59,33 +57,34 @@
 
 ---
 
-## 🧪 Testing
+## 🚀 Quick Start (Local Setup)
 
-Run automated C++ unit tests:
-
-```bash
-ninja -C build
-ctest --test-dir build --output-on-failure
-```
-
-Run comprehensive end-to-end API test suite:
-
-```bash
-python3 tests/e2e_test.py
-```
-
----
-
-## 🚀 Local Build & Run
-
+### 1. Build Backend
 ```bash
 # Configure build
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
 # Build executable
 ninja -C build
+```
 
-# Run application
+### 2. Run Application
+```bash
+# Start backend server on port 8080
 ./build/backend/atm_backend
 ```
-Open `http://localhost:8080` in your web browser.
+Then open `http://localhost:8080` in any web browser.
+
+---
+
+## 🧪 Testing
+
+### Automated C++ Unit Tests
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+### Automated End-to-End Test Suite (22/22 Tests)
+```bash
+python3 tests/comprehensive_test.py
+```
