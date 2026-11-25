@@ -13,5 +13,11 @@ services:
         value: 8080
       - key: FRONTEND_DIR
         value: /app/frontend
+      - key: ALLOWED_ORIGIN
+        value: https://vaultx-five-rosy.vercel.app
+      - key: ENABLE_DEMO_ACCOUNTS
+        value: "false"
+      - key: TRUST_PROXY
+        value: render
       - key: DATABASE_URL
         sync: false

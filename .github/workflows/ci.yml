@@ -13,22 +13,75 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
+      - name: Install PostgreSQL & Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libsqlite3-dev libssl-dev python3
+          sudo apt-get install -y --no-install-recommends cmake ninja-build pkg-config libpq-dev libpqxx-dev libssl-dev python3
 
       - name: Configure CMake
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build Project
+      - name: Build Project (C++17)
         run: ninja -C build
 
-      - name: Run CTest Unit Tests
+      - name: Run All CTest Unit & Security Suites
         run: ctest --test-dir build --output-on-failure
 
-      - name: Start Background Server & Run End-to-End Tests
+      - name: Validate JSON Configs
+        run: python3 -B -m json.tool vercel.json >/dev/null
+
+  postgres-e2e:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: vaultx_ci
+          POSTGRES_PASSWORD: vaultx_ci_password
+          POSTGRES_DB: vaultx_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U vaultx_ci -d vaultx_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies & PostgreSQL Client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build pkg-config libpq-dev libpqxx-dev libssl-dev postgresql-client python3
+
+      - name: Apply Production Schema to Ephemeral Test Database
+        env:
+          PGPASSWORD: vaultx_ci_password
+        run: |
+          psql -h 127.0.0.1 -U vaultx_ci -d vaultx_test -c "CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN;"
+          psql -h 127.0.0.1 -U vaultx_ci -d vaultx_test -v ON_ERROR_STOP=1 -f migration/schema_postgresql.sql
+
+      - name: Build Backend
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          ninja -C build atm_backend
+
+      - name: Start Backend & Run PostgreSQL E2E Suite
+        env:
+          DATABASE_URL: postgresql://vaultx_ci:vaultx_ci_password@127.0.0.1:5432/vaultx_test?sslmode=disable
+          HOST: 127.0.0.1
+          PORT: 8080
+          ENABLE_DEMO_ACCOUNTS: "false"
         run: |
           ./build/backend/atm_backend &
-          sleep 2
-          python3 tests/comprehensive_test.py
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 20); do
+            if python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=2)" 2>/dev/null; then
+              break
+            fi
+            sleep 0.5
+          done
+          python3 tests/e2e_test.py http://127.0.0.1:8080

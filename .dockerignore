@@ -1,0 +1,39 @@
+# Git & CI metadata
+.git
+.gitignore
+.github
+
+# Local build outputs
+build
+**/build
+CMakeFiles
+CMakeCache.txt
+cmake_install.cmake
+build.ninja
+.ninja_deps
+.ninja_log
+
+# Local SQLite databases & backups
+database
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+
+# Environment files & secrets
+.env
+.env.*
+!.env.example
+
+# Migration scripts & docs not needed inside container image
+migration
+*.md
+
+# IDE / OS / temp files
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.log
+*.tmp

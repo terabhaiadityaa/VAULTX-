@@ -2,6 +2,7 @@
 #define DATABASE_H
 
 #include <pqxx/pqxx>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -55,6 +56,7 @@ struct RegistrationResult {
 struct UserAuthRecord {
     bool found = false;
     int userId = -1;
+    std::string email;
     std::string pinHash;
 };
 
@@ -68,14 +70,19 @@ class Database {
 private:
     std::string connectionString;
     std::unique_ptr<pqxx::connection> conn;
+    std::chrono::steady_clock::time_point lastVerifiedAt{};
     std::mutex dbMutex;
 
     // Must be called with dbMutex locked. Reconnects cleanly if Supabase dropped an idle socket.
-    bool ensureConnected();
+    bool ensureConnected(bool forceVerify = false);
+
+    // Runs an operation under dbMutex and retries once on a transient dropped PostgreSQL socket.
+    template <typename Fn>
+    auto runWithReconnect(Fn&& fn) -> decltype(fn());
 
 public:
     Database();
-    ~Database();
+    virtual ~Database();
 
     Database(const Database&) = delete;
     Database& operator=(const Database&) = delete;
@@ -102,17 +109,21 @@ public:
         const std::string& depositDescription
     );
 
-    // Brute-force login attempt helpers.
-    std::int64_t getLoginLockUntil(const std::string& identifier);
-    void clearLoginAttempts(const std::string& identifier);
-    bool recordFailedLoginAttempt(
+    // Brute-force login attempt helpers (virtual to allow isolated unit testing).
+    virtual std::int64_t getLoginLockUntil(const std::string& identifier);
+    virtual void clearLoginAttempts(const std::string& identifier);
+    virtual void reconcileLegacyLoginAttempts(
+        const std::string& legacyIdentifier,
+        const std::string& canonicalEmail
+    );
+    virtual bool recordFailedLoginAttempt(
         const std::string& identifier,
         int maxAttempts,
         std::int64_t lockUntilEpoch,
         std::int64_t currentEpoch
     );
-    UserAuthRecord findUserForLogin(const std::string& identifier);
-    AccountLoginStatus findAccountForUser(int userId);
+    virtual UserAuthRecord findUserForLogin(const std::string& identifier);
+    virtual AccountLoginStatus findAccountForUser(int userId);
 
     // Returns the active account number belonging to this authenticated user.
     std::string getAccountNumberForUser(int userId);

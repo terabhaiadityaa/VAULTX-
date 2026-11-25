@@ -15,6 +15,8 @@ let sessionToken = null;
 let currentAccount = null;
 let currentTransactions = [];
 let currentFilter = 'all';
+let isAuthSubmitting = false;
+let isTxSubmitting = false;
 
 // DOM Elements
 const authSection = document.getElementById('authSection');
@@ -23,6 +25,7 @@ const userQuickInfo = document.getElementById('userQuickInfo');
 const headerAccountNum = document.getElementById('headerAccountNum');
 const copyAccountBtn = document.getElementById('copyAccountBtn');
 const logoutBtn = document.getElementById('logoutBtn');
+const themeToggleBtn = document.getElementById('themeToggleBtn');
 
 // Auth DOM
 const tabLoginBtn = document.getElementById('tabLoginBtn');
@@ -204,6 +207,12 @@ function clearToken() {
   } catch (_) {}
 }
 
+function handleSessionExpired(message) {
+  clearToken();
+  showAuthView();
+  showToast(message || 'Your session expired. Please re-insert your VAULTX card.', 'error', 5000);
+}
+
 async function checkExistingSession() {
   const token = getStoredToken();
   if (!token) {
@@ -213,28 +222,178 @@ async function checkExistingSession() {
 
   sessionToken = token;
   try {
-    const res = await fetch(`${API_BASE_URL}/api/account`, {
+    const accRes = await apiRequest('/api/account', {
       headers: { 'Authorization': `Bearer ${sessionToken}` }
-    });
+    }, 'Could not verify active session');
 
-    if (res.ok) {
-      currentAccount = await res.json();
+    if (accRes.ok) {
+      currentAccount = accRes.data;
       showDashboardView();
       await fetchTransactions();
-    } else {
+    } else if (accRes.status === 401) {
       clearToken();
       showAuthView();
+    } else {
+      showAuthView();
+      showToast(accRes.errorMessage, 'error');
     }
   } catch (err) {
     console.error('Session check error:', err);
     showAuthView();
+    showToast('VAULTX backend is currently unreachable. Please retry shortly.', 'error');
   }
+}
+
+async function apiRequest(path, options = {}, fallbackErrorMessage = 'Request failed.') {
+  const res = await fetch(`${API_BASE_URL}${path}`, options);
+  const rawText = await res.text();
+  let data = null;
+
+  if (rawText) {
+    try {
+      data = JSON.parse(rawText);
+    } catch (_) {
+      data = null;
+    }
+  }
+
+  if (res.ok) {
+    return { ok: true, status: res.status, data: data || {}, errorMessage: '' };
+  }
+
+  let errorMessage = (data && typeof data.message === 'string' && data.message.trim())
+    ? data.message.trim()
+    : '';
+
+  if (!errorMessage) {
+    if (res.status === 404) {
+      errorMessage = 'VAULTX backend API is currently unreachable (HTTP 404). Please try again shortly.';
+    } else if (res.status === 429) {
+      errorMessage = 'Too many requests. Please wait a moment and try again.';
+    } else if (res.status === 502 || res.status === 503 || res.status === 504) {
+      errorMessage = `VAULTX backend service is temporarily unavailable (HTTP ${res.status}). Please retry in a few seconds.`;
+    } else {
+      errorMessage = `${fallbackErrorMessage} (HTTP ${res.status}).`;
+    }
+  }
+
+  return { ok: false, status: res.status, data: data || {}, errorMessage };
+}
+
+// ==========================================================================
+// Theme Management (Light / Dark Mode)
+// ==========================================================================
+
+const THEME_STORAGE_KEY = 'vaultx_theme';
+
+function getSavedTheme() {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    return (saved === 'dark' || saved === 'light') ? saved : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function getSystemTheme() {
+  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    return 'dark';
+  }
+  return 'light';
+}
+
+function syncThemeToggleUI(theme) {
+  if (!themeToggleBtn) return;
+  const isDark = theme === 'dark';
+  const nextLabel = isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode';
+  themeToggleBtn.setAttribute('aria-pressed', String(isDark));
+  themeToggleBtn.setAttribute('aria-label', nextLabel);
+  themeToggleBtn.setAttribute('title', nextLabel);
+}
+
+function applyTheme(theme, animate = false) {
+  const normalized = theme === 'dark' ? 'dark' : 'light';
+  const root = document.documentElement;
+  const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (animate && !prefersReducedMotion) {
+    root.classList.add('theme-transition');
+    window.clearTimeout(applyTheme._timer);
+    applyTheme._timer = window.setTimeout(() => {
+      root.classList.remove('theme-transition');
+    }, 280);
+  }
+
+  root.setAttribute('data-theme', normalized);
+  root.style.colorScheme = normalized;
+  syncThemeToggleUI(normalized);
+}
+
+function initTheme() {
+  const initialTheme = getSavedTheme() || document.documentElement.getAttribute('data-theme') || getSystemTheme();
+  applyTheme(initialTheme, false);
+
+  if (themeToggleBtn) {
+    themeToggleBtn.addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+      const next = current === 'dark' ? 'light' : 'dark';
+      try {
+        localStorage.setItem(THEME_STORAGE_KEY, next);
+      } catch (_) {}
+      applyTheme(next, true);
+    });
+  }
+
+  if (window.matchMedia) {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const onSystemChange = (e) => {
+      // Manual user selection always takes priority over OS theme changes
+      if (!getSavedTheme()) {
+        applyTheme(e.matches ? 'dark' : 'light', true);
+      }
+    };
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', onSystemChange);
+    } else if (typeof mediaQuery.addListener === 'function') {
+      mediaQuery.addListener(onSystemChange);
+    }
+  }
+}
+
+function resetPinVisibility() {
+  document.querySelectorAll('.pin-toggle-btn').forEach(btn => {
+    const targetId = btn.getAttribute('data-target');
+    const input = targetId ? document.getElementById(targetId) : null;
+    if (input) input.type = 'password';
+    btn.classList.remove('is-visible');
+    btn.style.removeProperty('color');
+  });
+}
+
+function clearDashboardUI() {
+  headerAccountNum.textContent = '—';
+  statAccountNumber.textContent = '—';
+  cardAccountNumber.textContent = '•••• •••• •••• ••••';
+  cardHolderName.textContent = 'SIMULATED USER';
+  dashboardBalanceDisplay.textContent = '₹ 0.00';
+  dispenserText.textContent = 'Dispenser ready: select or enter withdrawal amount';
+  withdrawForm.reset();
+  depositForm.reset();
+  transferForm.reset();
+  receiptModal.style.display = 'none';
+  currentFilter = 'all';
+  filterPills.forEach(p => {
+    p.classList.toggle('active', p.getAttribute('data-filter') === 'all');
+  });
+  transactionTableBody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading transaction records...</td></tr>';
 }
 
 function showAuthView() {
   authSection.style.display = 'block';
   dashboardSection.style.display = 'none';
   userQuickInfo.style.display = 'none';
+  clearDashboardUI();
+  resetPinVisibility();
 }
 
 function showDashboardView() {
@@ -266,17 +425,21 @@ function updateDashboardUI() {
 // ==========================================================================
 
 tabLoginBtn.addEventListener('click', () => {
+  if (isAuthSubmitting) return;
   tabLoginBtn.classList.add('active');
   tabRegisterBtn.classList.remove('active');
   loginView.style.display = 'block';
   registerView.style.display = 'none';
+  resetPinVisibility();
 });
 
 tabRegisterBtn.addEventListener('click', () => {
+  if (isAuthSubmitting) return;
   tabRegisterBtn.classList.add('active');
   tabLoginBtn.classList.remove('active');
   registerView.style.display = 'block';
   loginView.style.display = 'none';
+  resetPinVisibility();
 });
 
 document.querySelectorAll('.pin-toggle-btn').forEach(btn => {
@@ -286,10 +449,10 @@ document.querySelectorAll('.pin-toggle-btn').forEach(btn => {
     if (!input) return;
     if (input.type === 'password') {
       input.type = 'text';
-      btn.style.color = 'var(--accent-blue)';
+      btn.classList.add('is-visible');
     } else {
       input.type = 'password';
-      btn.style.color = 'var(--slate-400)';
+      btn.classList.remove('is-visible');
     }
   });
 });
@@ -303,17 +466,23 @@ copyAccountBtn.addEventListener('click', () => {
 });
 
 logoutBtn.addEventListener('click', async () => {
-  if (sessionToken) {
-    try {
-      await fetch(`${API_BASE_URL}/api/auth/logout`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${sessionToken}` }
-      });
-    } catch (_) {}
+  if (logoutBtn.disabled) return;
+  logoutBtn.disabled = true;
+  try {
+    if (sessionToken) {
+      try {
+        await fetch(`${API_BASE_URL}/api/auth/logout`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${sessionToken}` }
+        });
+      } catch (_) {}
+    }
+    clearToken();
+    showAuthView();
+    showToast('VAULTX Card ejected safely.', 'info');
+  } finally {
+    logoutBtn.disabled = false;
   }
-  clearToken();
-  showAuthView();
-  showToast('VAULTX Card ejected safely.', 'info');
 });
 
 // ==========================================================================
@@ -322,6 +491,8 @@ logoutBtn.addEventListener('click', async () => {
 
 loginForm.addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (isAuthSubmitting || loginSubmitBtn.disabled) return;
+
   const rawAcc = loginIdentifier.value.replace(/\s+/g, '').replace(/-/g, '').trim();
   const pin = loginPin.value.trim();
 
@@ -334,33 +505,37 @@ loginForm.addEventListener('submit', async (e) => {
     return;
   }
 
+  isAuthSubmitting = true;
   loginSubmitBtn.disabled = true;
   loginSubmitBtn.querySelector('span').textContent = 'Reading Card…';
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accountNumber: rawAcc, pin: pin })
-    });
+    const authRes = await apiRequest(
+      '/api/auth/login',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountNumber: rawAcc, pin: pin })
+      },
+      'Authentication failed. Check card number or PIN.'
+    );
 
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-      showToast(data.message || 'Authentication failed. Check card number or PIN.', 'error');
+    if (!authRes.ok) {
+      showToast(authRes.errorMessage, 'error');
       return;
     }
 
+    const data = authRes.data;
     storeToken(data.sessionToken);
     showToast(`Card Authenticated! Welcome, ${data.fullName || 'Cardholder'}.`, 'success');
 
     // Fetch complete account info
-    const accRes = await fetch(`${API_BASE_URL}/api/account`, {
+    const accRes = await apiRequest('/api/account', {
       headers: { 'Authorization': `Bearer ${sessionToken}` }
     });
 
     if (accRes.ok) {
-      currentAccount = await accRes.json();
+      currentAccount = accRes.data;
     } else {
       currentAccount = {
         user: { fullName: data.fullName, email: data.email },
@@ -369,12 +544,14 @@ loginForm.addEventListener('submit', async (e) => {
     }
 
     loginForm.reset();
+    resetPinVisibility();
     showDashboardView();
     await fetchTransactions();
   } catch (err) {
     console.error('Login error:', err);
     showToast('Communication error with VAULTX terminal.', 'error');
   } finally {
+    isAuthSubmitting = false;
     loginSubmitBtn.disabled = false;
     loginSubmitBtn.querySelector('span').textContent = 'Insert Card & Authenticate';
   }
@@ -386,11 +563,13 @@ loginForm.addEventListener('submit', async (e) => {
 
 registerForm.addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (isAuthSubmitting || regSubmitBtn.disabled) return;
+
   const fullName = regFullName.value.trim();
   const pin = regPin.value.trim();
 
-  if (!fullName || fullName.length < 2) {
-    showToast('Please enter your full legal cardholder name.', 'error');
+  if (!fullName || fullName.length < 2 || fullName.length > 100) {
+    showToast('Cardholder full name must be between 2 and 100 characters.', 'error');
     return;
   }
   if (!/^\d{6}$/.test(pin)) {
@@ -398,54 +577,79 @@ registerForm.addEventListener('submit', async (e) => {
     return;
   }
 
+  isAuthSubmitting = true;
   regSubmitBtn.disabled = true;
   regSubmitBtn.querySelector('span').textContent = 'Embossing Card…';
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fullName, pin })
-    });
+    const regRes = await apiRequest(
+      '/api/auth/register',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fullName, pin })
+      },
+      'Card issuance failed'
+    );
 
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-      showToast(data.message || 'Card issuance failed.', 'error');
+    if (!regRes.ok) {
+      showToast(regRes.errorMessage, 'error');
       return;
     }
 
+    const data = regRes.data;
     const newAccNum = data.accountNumber;
+    registerForm.reset();
+    resetPinVisibility();
     showToast(`New Card Issued: ${formatCardDisplay(newAccNum)} with ₹10,000 balance!`, 'success', 5000);
 
     // Auto-login with the newly issued card
-    const loginRes = await fetch(`${API_BASE_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accountNumber: newAccNum, pin: pin })
-    });
+    regSubmitBtn.querySelector('span').textContent = 'Activating Terminal…';
+    const loginRes = await apiRequest(
+      '/api/auth/login',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountNumber: newAccNum, pin: pin })
+      },
+      'Card issued, please sign in with your new card number.'
+    );
 
-    if (loginRes.ok) {
-      const loginData = await loginRes.json();
+    if (loginRes.ok && loginRes.data.sessionToken) {
+      const loginData = loginRes.data;
       storeToken(loginData.sessionToken);
 
-      const accRes = await fetch(`${API_BASE_URL}/api/account`, {
+      const accRes = await apiRequest('/api/account', {
         headers: { 'Authorization': `Bearer ${sessionToken}` }
       });
-      if (accRes.ok) currentAccount = await accRes.json();
 
-      registerForm.reset();
+      if (accRes.ok) {
+        currentAccount = accRes.data;
+      } else {
+        currentAccount = {
+          user: { fullName: loginData.fullName || fullName, email: loginData.email || '' },
+          account: {
+            accountNumber: loginData.accountNumber || newAccNum,
+            balance: typeof loginData.balance === 'number' ? loginData.balance : 10000.0,
+            balancePaise: typeof loginData.balancePaise === 'number' ? loginData.balancePaise : 1000000
+          }
+        };
+      }
+
       showDashboardView();
       await fetchTransactions();
     } else {
+      isAuthSubmitting = false;
       tabLoginBtn.click();
       loginIdentifier.value = formatCardDisplay(newAccNum);
       loginPin.value = pin;
+      showToast(`Card #${formatCardDisplay(newAccNum)} created, but auto-login failed: ${loginRes.errorMessage}`, 'error', 6000);
     }
   } catch (err) {
     console.error('Registration error:', err);
     showToast('Failed to communicate with VAULTX backend.', 'error');
   } finally {
+    isAuthSubmitting = false;
     regSubmitBtn.disabled = false;
     regSubmitBtn.querySelector('span').textContent = 'Issue VAULTX Card & Claim ₹10,000';
   }
@@ -472,24 +676,45 @@ tabButtons.forEach(btn => {
 });
 
 refreshBalanceBtn.addEventListener('click', async () => {
+  if (refreshBalanceBtn.disabled) return;
   refreshBalanceBtn.disabled = true;
-  await refreshAccountBalance();
-  refreshBalanceBtn.disabled = false;
-  showToast('Available balance updated.', 'info', 2000);
+  try {
+    const updated = await refreshAccountBalance(true);
+    if (updated) {
+      showToast('Available balance updated.', 'info', 2000);
+    }
+  } finally {
+    refreshBalanceBtn.disabled = false;
+  }
 });
 
-async function refreshAccountBalance() {
-  if (!sessionToken) return;
+async function refreshAccountBalance(showErrors = false) {
+  if (!sessionToken) return false;
   try {
-    const res = await fetch(`${API_BASE_URL}/api/account`, {
-      headers: { 'Authorization': `Bearer ${sessionToken}` }
-    });
+    const res = await apiRequest(
+      '/api/account',
+      { headers: { 'Authorization': `Bearer ${sessionToken}` } },
+      'Could not refresh account balance'
+    );
     if (res.ok) {
-      currentAccount = await res.json();
+      currentAccount = res.data;
       updateDashboardUI();
+      return true;
     }
+    if (res.status === 401) {
+      handleSessionExpired(res.errorMessage);
+      return false;
+    }
+    if (showErrors) {
+      showToast(res.errorMessage, 'error');
+    }
+    return false;
   } catch (err) {
     console.error('Refresh balance error:', err);
+    if (showErrors) {
+      showToast('Could not reach VAULTX backend to refresh balance.', 'error');
+    }
+    return false;
   }
 }
 
@@ -513,6 +738,7 @@ withdrawAmountInput.addEventListener('input', () => {
 
 withdrawForm.addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (isTxSubmitting || withdrawSubmitBtn.disabled) return;
   const amount = Number(withdrawAmountInput.value);
 
   if (!amount || amount <= 0 || amount % 100 !== 0) {
@@ -528,23 +754,30 @@ withdrawForm.addEventListener('submit', async (e) => {
     return;
   }
 
+  isTxSubmitting = true;
   withdrawSubmitBtn.disabled = true;
   withdrawSubmitBtn.querySelector('span').textContent = 'Dispensing Notes…';
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/withdraw`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${sessionToken}`
+    const res = await apiRequest(
+      '/api/withdraw',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionToken}`
+        },
+        body: JSON.stringify({ amount: amount })
       },
-      body: JSON.stringify({ amount: amount })
-    });
-
-    const data = await res.json().catch(() => ({}));
+      'Withdrawal failed'
+    );
 
     if (!res.ok) {
-      showToast(data.message || 'Withdrawal failed.', 'error');
+      if (res.status === 401) {
+        handleSessionExpired(res.errorMessage);
+      } else {
+        showToast(res.errorMessage, 'error');
+      }
       return;
     }
 
@@ -558,6 +791,7 @@ withdrawForm.addEventListener('submit', async (e) => {
     console.error('Withdrawal error:', err);
     showToast('VAULTX communication error.', 'error');
   } finally {
+    isTxSubmitting = false;
     withdrawSubmitBtn.disabled = false;
     withdrawSubmitBtn.querySelector('span').textContent = 'Dispense Simulated Cash';
   }
@@ -576,6 +810,7 @@ document.querySelectorAll('.deposit-preset').forEach(btn => {
 
 depositForm.addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (isTxSubmitting || depositSubmitBtn.disabled) return;
   const amount = Number(depositAmountInput.value);
 
   if (!amount || amount <= 0) {
@@ -587,23 +822,30 @@ depositForm.addEventListener('submit', async (e) => {
     return;
   }
 
+  isTxSubmitting = true;
   depositSubmitBtn.disabled = true;
   depositSubmitBtn.querySelector('span').textContent = 'Processing Deposit…';
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/deposit`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${sessionToken}`
+    const res = await apiRequest(
+      '/api/deposit',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionToken}`
+        },
+        body: JSON.stringify({ amount: amount })
       },
-      body: JSON.stringify({ amount: amount })
-    });
-
-    const data = await res.json().catch(() => ({}));
+      'Deposit failed'
+    );
 
     if (!res.ok) {
-      showToast(data.message || 'Deposit failed.', 'error');
+      if (res.status === 401) {
+        handleSessionExpired(res.errorMessage);
+      } else {
+        showToast(res.errorMessage, 'error');
+      }
       return;
     }
 
@@ -616,6 +858,7 @@ depositForm.addEventListener('submit', async (e) => {
     console.error('Deposit error:', err);
     showToast('VAULTX communication error.', 'error');
   } finally {
+    isTxSubmitting = false;
     depositSubmitBtn.disabled = false;
     depositSubmitBtn.querySelector('span').textContent = 'Confirm Cash Deposit';
   }
@@ -627,6 +870,7 @@ depositForm.addEventListener('submit', async (e) => {
 
 transferForm.addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (isTxSubmitting || transferSubmitBtn.disabled) return;
   const target = transferTargetInput.value.replace(/\s+/g, '').replace(/-/g, '').trim();
   const amount = Number(transferAmountInput.value);
 
@@ -647,23 +891,30 @@ transferForm.addEventListener('submit', async (e) => {
     return;
   }
 
+  isTxSubmitting = true;
   transferSubmitBtn.disabled = true;
   transferSubmitBtn.querySelector('span').textContent = 'Executing Transfer…';
 
   try {
-    const res = await fetch(`${API_BASE_URL}/api/transfer`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${sessionToken}`
+    const res = await apiRequest(
+      '/api/transfer',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionToken}`
+        },
+        body: JSON.stringify({ targetAccount: target, amount: amount })
       },
-      body: JSON.stringify({ targetAccount: target, amount: amount })
-    });
-
-    const data = await res.json().catch(() => ({}));
+      'Transfer failed'
+    );
 
     if (!res.ok) {
-      showToast(data.message || 'Transfer failed.', 'error');
+      if (res.status === 401) {
+        handleSessionExpired(res.errorMessage);
+      } else {
+        showToast(res.errorMessage, 'error');
+      }
       return;
     }
 
@@ -677,6 +928,7 @@ transferForm.addEventListener('submit', async (e) => {
     console.error('Transfer error:', err);
     showToast('VAULTX communication error.', 'error');
   } finally {
+    isTxSubmitting = false;
     transferSubmitBtn.disabled = false;
     transferSubmitBtn.querySelector('span').textContent = 'Execute Secure Transfer';
   }
@@ -689,17 +941,23 @@ transferForm.addEventListener('submit', async (e) => {
 async function fetchTransactions() {
   if (!sessionToken) return;
   try {
-    const res = await fetch(`${API_BASE_URL}/api/transactions?limit=50`, {
-      headers: { 'Authorization': `Bearer ${sessionToken}` }
-    });
+    const res = await apiRequest(
+      '/api/transactions?limit=50',
+      { headers: { 'Authorization': `Bearer ${sessionToken}` } },
+      'Could not load transaction history'
+    );
 
     if (res.ok) {
-      const data = await res.json();
-      currentTransactions = data.transactions || [];
+      currentTransactions = res.data.transactions || [];
       renderTransactions();
+    } else if (res.status === 401) {
+      handleSessionExpired(res.errorMessage);
+    } else {
+      showToast(res.errorMessage, 'error');
     }
   } catch (err) {
     console.error('Fetch transactions error:', err);
+    showToast('Failed to load transaction ledger.', 'error');
   }
 }
 
@@ -832,5 +1090,6 @@ printReceiptBtn.addEventListener('click', () => {
 
 // Initialize on DOM load
 document.addEventListener('DOMContentLoaded', () => {
+  initTheme();
   checkExistingSession();
 });

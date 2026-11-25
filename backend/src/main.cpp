@@ -9,13 +9,19 @@
  */
 
 #include <iostream>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <csignal>
 #include <limits>
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <sstream>
+#include <thread>
+#include <vector>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
@@ -29,6 +35,13 @@ using json = nlohmann::json;
 
 namespace {
 
+std::atomic<bool> gShutdownRequested{false};
+volatile std::sig_atomic_t gSignalReceived = 0;
+
+void handleShutdownSignal(int sig) {
+    gSignalReceived = sig;
+}
+
 std::string extractBearerToken(const httplib::Request& req) {
     std::string token = req.get_header_value("Authorization");
     const std::string prefix = "Bearer ";
@@ -38,28 +51,88 @@ std::string extractBearerToken(const httplib::Request& req) {
     return "";
 }
 
-std::string getClientIp(const httplib::Request& req) {
-    if (req.has_header("CF-Connecting-IP")) {
-        return req.get_header_value("CF-Connecting-IP");
-    }
-    if (req.has_header("X-Forwarded-For")) {
-        std::string xff = req.get_header_value("X-Forwarded-For");
-        size_t comma = xff.find(',');
-        if (comma != std::string::npos) {
-            return xff.substr(0, comma);
+std::string trimString(const std::string& input) {
+    size_t start = input.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) return "";
+    size_t end = input.find_last_not_of(" \t\r\n");
+    return input.substr(start, end - start + 1);
+}
+
+bool isEnvFlagTrue(const char* val) {
+    if (!val) return false;
+    std::string cleaned = trimString(val);
+    if (cleaned.empty()) return false;
+    std::transform(cleaned.begin(), cleaned.end(), cleaned.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return (cleaned == "true" || cleaned == "1" || cleaned == "yes");
+}
+
+std::vector<std::string> parseAllowedOrigins(const char* envVal) {
+    std::vector<std::string> origins;
+    if (envVal) {
+        std::stringstream ss(envVal);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            std::string trimmed = trimString(item);
+            while (trimmed.size() > 1 && trimmed.back() == '/') {
+                trimmed.pop_back();
+            }
+            if (!trimmed.empty()) {
+                origins.push_back(trimmed);
+            }
         }
-        return xff;
     }
-    return req.remote_addr;
+    if (origins.empty()) {
+        origins.emplace_back("https://vaultx-five-rosy.vercel.app");
+    }
+    return origins;
+}
+
+bool applyCorsHeaders(
+    const httplib::Request& req,
+    httplib::Response& res,
+    const std::vector<std::string>& allowedOrigins
+) {
+    res.set_header("Vary", "Origin");
+    if (!req.has_header("Origin")) {
+        return true; // Same-origin / non-browser client
+    }
+
+    const std::string origin = trimString(req.get_header_value("Origin"));
+    for (const auto& allowed : allowedOrigins) {
+        if (allowed == "*" || origin == allowed) {
+            res.set_header("Access-Control-Allow-Origin", allowed == "*" ? "*" : origin);
+            res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+            return true;
+        }
+    }
+    return false;
+}
+
+void applySecurityHeaders(httplib::Response& res) {
+    res.set_header(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
+        "base-uri 'self'; form-action 'self'"
+    );
+    res.set_header("X-Content-Type-Options", "nosniff");
+    res.set_header("X-Frame-Options", "DENY");
+    res.set_header("Referrer-Policy", "strict-origin-when-cross-origin");
+}
+
+std::string getClientIp(const httplib::Request& req, TrustedProxyMode proxyMode) {
+    const std::string cfIp = req.has_header("CF-Connecting-IP") ? req.get_header_value("CF-Connecting-IP") : "";
+    const std::string xff = req.has_header("X-Forwarded-For") ? req.get_header_value("X-Forwarded-For") : "";
+    return RateLimiter::resolveClientIp(req.remote_addr, cfIp, xff, proxyMode);
 }
 
 void sendJson(httplib::Response& res, int status, const json& body) {
     res.status = status;
     res.set_header("Content-Type", "application/json");
     res.set_header("Cache-Control", "no-store, no-cache, must-revalidate");
-    res.set_header("X-Content-Type-Options", "nosniff");
-    res.set_header("X-Frame-Options", "DENY");
-    res.set_header("Referrer-Policy", "strict-origin-when-cross-origin");
+    applySecurityHeaders(res);
     res.set_content(body.dump(4), "application/json");
 }
 
@@ -159,33 +232,55 @@ int main() {
         return 1;
     }
 
-    // Seed demo accounts only if missing (existing records are preserved untouched)
-    seedDemoAccounts(database);
+    // Demo accounts are DISABLED by default in production (ENABLE_DEMO_ACCOUNTS must be explicitly true)
+    const bool demoAccountsEnabled = isEnvFlagTrue(std::getenv("ENABLE_DEMO_ACCOUNTS"));
+    if (demoAccountsEnabled) {
+        seedDemoAccounts(database);
+    } else {
+        std::cout << "[INFO] Demo accounts disabled by default (ENABLE_DEMO_ACCOUNTS=false)." << std::endl;
+    }
+
+    const TrustedProxyMode proxyMode = RateLimiter::parseTrustedProxyMode(std::getenv("TRUST_PROXY"));
+    const std::vector<std::string> allowedOrigins = parseAllowedOrigins(std::getenv("ALLOWED_ORIGIN"));
 
     AuthService authService(database);
     SessionManager sessionManager;
     RateLimiter generalLimiter(120, std::chrono::seconds(60));
     RateLimiter authLimiter(30, std::chrono::seconds(60));
+    std::atomic<std::uint64_t> apiRequestCounter{0};
 
     httplib::Server server;
 
-    // Security: Request payload limit (64 KB maximum to prevent memory exhaustion / DoS)
+    // Security: HTTP timeouts & 64 KB payload limit to mitigate Slowloris & DoS exhaustion
+    server.set_read_timeout(10, 0);
+    server.set_write_timeout(10, 0);
+    server.set_keep_alive_timeout(15);
+    server.set_keep_alive_max_count(50);
     server.set_payload_max_length(64 * 1024);
 
-    // Global CORS preflight, Security Headers, and IP Rate Limiting
-    server.set_pre_routing_handler([&generalLimiter, &authLimiter](const httplib::Request& req, httplib::Response& res) {
+    // Global CORS preflight, Security Headers, IP Rate Limiting, and Periodic Cleanup
+    server.set_pre_routing_handler([&generalLimiter, &authLimiter, &sessionManager, &apiRequestCounter, proxyMode, &allowedOrigins](const httplib::Request& req, httplib::Response& res) {
         if (req.method == "OPTIONS") {
+            applySecurityHeaders(res);
+            if (!applyCorsHeaders(req, res, allowedOrigins)) {
+                res.status = 403;
+                return httplib::Server::HandlerResponse::Handled;
+            }
             res.status = 204;
-            res.set_header("Access-Control-Allow-Origin", "*");
             res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-            res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
             res.set_header("Access-Control-Max-Age", "86400");
             return httplib::Server::HandlerResponse::Handled;
         }
 
-        // Apply sliding-window rate limiting to API endpoints
+        // Apply sliding-window rate limiting to API endpoints and periodic memory sweeps
         if (req.path.rfind("/api/", 0) == 0) {
-            std::string clientIp = getClientIp(req);
+            if ((apiRequestCounter.fetch_add(1, std::memory_order_relaxed) % 100) == 0) {
+                sessionManager.removeExpiredSessions();
+                generalLimiter.cleanup();
+                authLimiter.cleanup();
+            }
+
+            std::string clientIp = getClientIp(req, proxyMode);
             bool allowed = true;
             if (req.path == "/api/auth/login" || req.path == "/api/auth/register") {
                 allowed = authLimiter.allow(clientIp);
@@ -194,6 +289,7 @@ int main() {
             }
 
             if (!allowed) {
+                applyCorsHeaders(req, res, allowedOrigins);
                 sendJson(res, 429, {
                     {"status", "error"},
                     {"message", "Too many requests. Please wait a moment and try again."}
@@ -205,12 +301,9 @@ int main() {
         return httplib::Server::HandlerResponse::Unhandled;
     });
 
-    server.set_post_routing_handler([](const httplib::Request&, httplib::Response& res) {
-        res.set_header("Access-Control-Allow-Origin", "*");
-        res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-        res.set_header("X-Content-Type-Options", "nosniff");
-        res.set_header("X-Frame-Options", "DENY");
-        res.set_header("Referrer-Policy", "strict-origin-when-cross-origin");
+    server.set_post_routing_handler([&allowedOrigins](const httplib::Request& req, httplib::Response& res) {
+        applySecurityHeaders(res);
+        applyCorsHeaders(req, res, allowedOrigins);
     });
 
     // Mount static frontend directory
@@ -256,8 +349,16 @@ int main() {
         }
     });
 
-    // Pre-configured simulated demo accounts
-    server.Get("/api/demo-accounts", [](const httplib::Request&, httplib::Response& res) {
+    // Pre-configured simulated demo accounts (disabled by default unless ENABLE_DEMO_ACCOUNTS=true)
+    server.Get("/api/demo-accounts", [demoAccountsEnabled](const httplib::Request&, httplib::Response& res) {
+        if (!demoAccountsEnabled) {
+            sendJson(res, 404, {
+                {"status", "error"},
+                {"message", "Demo accounts are disabled in this environment."}
+            });
+            return;
+        }
+
         sendJson(res, 200, {
             {"status", "success"},
             {"accounts", {
@@ -294,7 +395,8 @@ int main() {
         try {
             json request = json::parse(req.body);
 
-            if (!request.contains("fullName") || !request.contains("pin") ||
+            if (!request.is_object() ||
+                !request.contains("fullName") || !request.contains("pin") ||
                 !request["fullName"].is_string() || !request["pin"].is_string()) {
                 sendJson(res, 400, {
                     {"status", "error"},
@@ -340,6 +442,14 @@ int main() {
     server.Post("/api/auth/login", [&authService, &sessionManager, &database](const httplib::Request& req, httplib::Response& res) {
         try {
             json request = json::parse(req.body);
+
+            if (!request.is_object()) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "Invalid JSON request format."}
+                });
+                return;
+            }
 
             std::string identifier = "";
             if (request.contains("accountNumber") && request["accountNumber"].is_string()) {
@@ -810,7 +920,28 @@ int main() {
     std::cout << "  GET  /api/transactions\n";
     std::cout << "============================================\n\n";
 
-    if (!server.listen(host.c_str(), port)) {
+    std::signal(SIGINT, handleShutdownSignal);
+    std::signal(SIGTERM, handleShutdownSignal);
+
+    std::thread signalWatcher([&server]() {
+        while (!gShutdownRequested.load(std::memory_order_relaxed)) {
+            if (gSignalReceived != 0) {
+                gShutdownRequested.store(true, std::memory_order_relaxed);
+                server.stop();
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        }
+    });
+
+    const bool listenOk = server.listen(host.c_str(), port);
+    gShutdownRequested.store(true, std::memory_order_relaxed);
+    if (signalWatcher.joinable()) {
+        signalWatcher.join();
+    }
+    database.disconnect();
+
+    if (!listenOk && gSignalReceived == 0) {
         std::cerr << "Failed to start server on " << host << ":" << port << std::endl;
         return 1;
     }
