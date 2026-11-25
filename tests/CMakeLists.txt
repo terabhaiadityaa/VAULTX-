@@ -45,6 +45,7 @@ add_executable(p1_security_test
     ../backend/src/database/Database.cpp
     ../backend/src/services/AuthService.cpp
     ../backend/src/security/PinHasher.cpp
+    ../backend/src/security/PhoneUtils.cpp
     ../backend/src/security/RateLimiter.cpp
     ../backend/src/security/SessionManager.cpp
 )

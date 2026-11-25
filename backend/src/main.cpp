@@ -168,10 +168,74 @@ bool parseRupeesToPaise(
     return true;
 }
 
+std::string jsonStringField(const json& obj, const char* key) {
+    if (obj.is_object() && obj.contains(key) && obj[key].is_string()) {
+        return obj[key].get<std::string>();
+    }
+    return "";
+}
+
+void extractPhoneFields(const json& obj, std::string& outCountryCode, std::string& outMobile) {
+    outCountryCode = jsonStringField(obj, "countryCode");
+    if (outCountryCode.empty()) {
+        outCountryCode = jsonStringField(obj, "country_code");
+    }
+
+    outMobile = jsonStringField(obj, "mobileNumber");
+    if (outMobile.empty()) {
+        outMobile = jsonStringField(obj, "mobile_number");
+    }
+    if (outMobile.empty()) {
+        outMobile = jsonStringField(obj, "phone_number");
+    }
+    if (outMobile.empty()) {
+        outMobile = jsonStringField(obj, "phoneNumber");
+    }
+    if (outMobile.empty()) {
+        outMobile = jsonStringField(obj, "phone");
+    }
+}
+
+void issueAuthenticatedSessionResponse(
+    httplib::Response& res,
+    SessionManager& sessionManager,
+    Database& database,
+    const AuthResult& authResult,
+    const std::string& successMessage
+) {
+    std::string token = sessionManager.createSession(authResult.userId);
+    if (token.empty()) {
+        sendJson(res, 500, {
+            {"status", "error"},
+            {"message", "Could not establish secure login session."}
+        });
+        return;
+    }
+
+    AccountDetails acc = database.getAccountDetailsForUser(authResult.userId);
+    const std::string mobile = !acc.mobileNumber.empty() ? acc.mobileNumber : authResult.mobileNumber;
+
+    sendJson(res, 200, {
+        {"status", "success"},
+        {"message", successMessage},
+        {"userId", authResult.userId},
+        {"fullName", acc.fullName},
+        {"email", acc.email},
+        {"mobileNumber", mobile},
+        {"mobileVerified", acc.mobileVerified},
+        {"accountNumber", authResult.accountNumber},
+        {"balancePaise", acc.balancePaise},
+        {"balance", static_cast<double>(acc.balancePaise) / 100.0},
+        {"sessionToken", token},
+        {"expiresInSeconds", 900}
+    });
+}
+
 void seedDemoAccounts(Database& database) {
     struct DemoCard {
         std::string name;
         std::string email;
+        std::string mobile;
         std::string pin;
         std::string accountNum;
         std::int64_t balancePaise;
@@ -179,10 +243,10 @@ void seedDemoAccounts(Database& database) {
     };
 
     std::vector<DemoCard> demoCards = {
-        {"Aditya Sharma", "aditya@vaultx.sim", "123456", "100020003000", 7500000, "Platinum VIP"},
-        {"Priya Patel",   "priya@vaultx.sim",  "654321", "100020004000", 4250000, "Gold Premium"},
-        {"Rahul Verma",   "rahul@vaultx.sim",  "112233", "100020005000", 15000000, "Business Executive"},
-        {"Simran Kaur",   "simran@vaultx.sim", "998877", "100020006000", 1800000, "Student Advantage"}
+        {"Aditya Sharma", "aditya@vaultx.sim", "+919999000001", "123456", "100020003000", 7500000, "Platinum VIP"},
+        {"Priya Patel",   "priya@vaultx.sim",  "+919999000002", "654321", "100020004000", 4250000, "Gold Premium"},
+        {"Rahul Verma",   "rahul@vaultx.sim",  "+919999000003", "112233", "100020005000", 15000000, "Business Executive"},
+        {"Simran Kaur",   "simran@vaultx.sim", "+919999000004", "998877", "100020006000", 1800000, "Student Advantage"}
     };
 
     for (const auto& card : demoCards) {
@@ -198,6 +262,7 @@ void seedDemoAccounts(Database& database) {
         database.createCardAccount(
             card.name,
             card.email,
+            card.mobile,
             hashedPin,
             card.accountNum,
             card.balancePaise,
@@ -282,7 +347,9 @@ int main() {
 
             std::string clientIp = getClientIp(req, proxyMode);
             bool allowed = true;
-            if (req.path == "/api/auth/login" || req.path == "/api/auth/register") {
+            if (req.path == "/api/auth/login" ||
+                req.path == "/api/auth/register" ||
+                req.path == "/api/auth/link-mobile") {
                 allowed = authLimiter.allow(clientIp);
             } else {
                 allowed = generalLimiter.allow(clientIp);
@@ -390,30 +457,48 @@ int main() {
         });
     });
 
-    // User registration (Card issuance)
+    // User registration (Card issuance + canonical E.164 mobile binding)
     server.Post("/api/auth/register", [&authService](const httplib::Request& req, httplib::Response& res) {
         try {
             json request = json::parse(req.body);
-
-            if (!request.is_object() ||
-                !request.contains("fullName") || !request.contains("pin") ||
-                !request["fullName"].is_string() || !request["pin"].is_string()) {
+            if (!request.is_object()) {
                 sendJson(res, 400, {
                     {"status", "error"},
-                    {"message", "Full name and 6-digit PIN are required."}
+                    {"message", "Invalid JSON request format."}
                 });
                 return;
             }
 
-            std::string email = "";
-            if (request.contains("email") && request["email"].is_string()) {
-                email = request["email"].get<std::string>();
+            const std::string fullName = jsonStringField(request, "fullName");
+            const std::string pin = jsonStringField(request, "pin");
+            std::string countryCode;
+            std::string mobileNumber;
+            extractPhoneFields(request, countryCode, mobileNumber);
+
+            const bool hasConfirm = request.contains("confirmPin") || request.contains("confirm_pin");
+            std::string confirmPin = jsonStringField(request, "confirmPin");
+            if (confirmPin.empty()) {
+                confirmPin = jsonStringField(request, "confirm_pin");
             }
 
+            if (fullName.empty() || mobileNumber.empty() || pin.empty()) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "Full name, mobile number, and 6-digit PIN are required."}
+                });
+                return;
+            }
+
+            const std::string email = jsonStringField(request, "email");
+
             AuthResult result = authService.registerUser(
-                request["fullName"].get<std::string>(),
+                fullName,
+                countryCode,
+                mobileNumber,
                 email,
-                request["pin"].get<std::string>()
+                pin,
+                confirmPin,
+                hasConfirm
             );
 
             if (result.success) {
@@ -422,6 +507,8 @@ int main() {
                     {"message", "New ATM Debit Card issued successfully."},
                     {"userId", result.userId},
                     {"accountNumber", result.accountNumber},
+                    {"mobileNumber", result.mobileNumber},
+                    {"mobileVerified", false},
                     {"initialBalance", 10000.0}
                 });
             } else {
@@ -438,11 +525,10 @@ int main() {
         }
     });
 
-    // ATM Card Login (Account Number + PIN)
+    // Mobile Number + 6-digit PIN Login
     server.Post("/api/auth/login", [&authService, &sessionManager, &database](const httplib::Request& req, httplib::Response& res) {
         try {
             json request = json::parse(req.body);
-
             if (!request.is_object()) {
                 sendJson(res, 400, {
                     {"status", "error"},
@@ -451,65 +537,82 @@ int main() {
                 return;
             }
 
-            std::string identifier = "";
-            if (request.contains("accountNumber") && request["accountNumber"].is_string()) {
-                identifier = request["accountNumber"].get<std::string>();
-            } else if (request.contains("email") && request["email"].is_string()) {
-                identifier = request["email"].get<std::string>();
-            } else if (request.contains("identifier") && request["identifier"].is_string()) {
-                identifier = request["identifier"].get<std::string>();
-            }
+            std::string countryCode;
+            std::string mobileNumber;
+            extractPhoneFields(request, countryCode, mobileNumber);
+            const std::string pin = jsonStringField(request, "pin");
 
-            if (identifier.empty() || !request.contains("pin") || !request["pin"].is_string()) {
+            if (mobileNumber.empty() || pin.empty()) {
                 sendJson(res, 400, {
                     {"status", "error"},
-                    {"message", "12-digit ATM Card/Account Number and 6-digit PIN are required."}
+                    {"message", "Mobile number and 6-digit PIN are required."}
                 });
                 return;
             }
 
-            // Strip spaces and dashes from account number
-            identifier.erase(
-                std::remove_if(identifier.begin(), identifier.end(), [](unsigned char c) {
-                    return c == ' ' || c == '-';
-                }),
-                identifier.end()
-            );
-
-            std::string pin = request["pin"].get<std::string>();
-
-            AuthResult result = authService.loginUser(identifier, pin);
+            AuthResult result = authService.loginUser(countryCode, mobileNumber, pin);
             if (!result.success) {
-                sendJson(res, 401, {
+                sendJson(res, result.invalidInput ? 400 : 401, {
                     {"status", "error"},
                     {"message", result.message}
                 });
                 return;
             }
 
-            std::string token = sessionManager.createSession(result.userId);
-            if (token.empty()) {
-                sendJson(res, 500, {
+            issueAuthenticatedSessionResponse(
+                res, sessionManager, database, result, "Card authenticated successfully."
+            );
+            applySecurityHeaders(res);
+        } catch (const json::exception&) {
+            sendJson(res, 400, {
+                {"status", "error"},
+                {"message", "Invalid JSON request format."}
+            });
+        }
+    });
+
+    // Safe migration endpoint allowing legacy Card/Email accounts (mobile_number IS NULL) to link a mobile number
+    server.Post("/api/auth/link-mobile", [&authService, &sessionManager, &database](const httplib::Request& req, httplib::Response& res) {
+        try {
+            json request = json::parse(req.body);
+            if (!request.is_object()) {
+                sendJson(res, 400, {
                     {"status", "error"},
-                    {"message", "Could not establish secure login session."}
+                    {"message", "Invalid JSON request format."}
                 });
                 return;
             }
 
-            AccountDetails acc = database.getAccountDetailsForUser(result.userId);
+            std::string legacyId = jsonStringField(request, "identifier");
+            if (legacyId.empty()) legacyId = jsonStringField(request, "accountNumber");
+            if (legacyId.empty()) legacyId = jsonStringField(request, "email");
 
-            sendJson(res, 200, {
-                {"status", "success"},
-                {"message", "Card authenticated successfully."},
-                {"userId", result.userId},
-                {"fullName", acc.fullName},
-                {"email", acc.email},
-                {"accountNumber", result.accountNumber},
-                {"balancePaise", acc.balancePaise},
-                {"balance", static_cast<double>(acc.balancePaise) / 100.0},
-                {"sessionToken", token},
-                {"expiresInSeconds", 900}
-            });
+            std::string countryCode;
+            std::string mobileNumber;
+            extractPhoneFields(request, countryCode, mobileNumber);
+            const std::string pin = jsonStringField(request, "pin");
+
+            if (legacyId.empty() || mobileNumber.empty() || pin.empty()) {
+                sendJson(res, 400, {
+                    {"status", "error"},
+                    {"message", "Existing card/email, 6-digit PIN, and mobile number are required."}
+                });
+                return;
+            }
+
+            AuthResult result = authService.linkMobileToLegacyUser(legacyId, pin, countryCode, mobileNumber);
+            if (!result.success) {
+                sendJson(res, result.invalidInput ? 400 : 401, {
+                    {"status", "error"},
+                    {"message", result.message}
+                });
+                return;
+            }
+
+            issueAuthenticatedSessionResponse(
+                res, sessionManager, database, result, "Mobile number linked and session authenticated."
+            );
+            applySecurityHeaders(res);
         } catch (const json::exception&) {
             sendJson(res, 400, {
                 {"status", "error"},
@@ -556,6 +659,8 @@ int main() {
             {"userId", userId},
             {"fullName", acc.fullName},
             {"email", acc.email},
+            {"mobileNumber", acc.mobileNumber},
+            {"mobileVerified", acc.mobileVerified},
             {"accountNumber", acc.accountNumber},
             {"balancePaise", acc.balancePaise},
             {"balance", static_cast<double>(acc.balancePaise) / 100.0}
@@ -589,7 +694,9 @@ int main() {
             {"user", {
                 {"userId", acc.userId},
                 {"fullName", acc.fullName},
-                {"email", acc.email}
+                {"email", acc.email},
+                {"mobileNumber", acc.mobileNumber},
+                {"mobileVerified", acc.mobileVerified}
             }},
             {"account", {
                 {"accountId", acc.accountId},
@@ -903,7 +1010,7 @@ int main() {
 
     std::cout << "\n============================================\n";
     std::cout << " VAULTX — SECURE ACCESS. SMARTER BANKING.\n";
-    std::cout << " (Account-Only ATM Card Authentication)\n";
+    std::cout << " (Mobile Number + PIN Authentication)\n";
     std::cout << "============================================\n";
     std::cout << "[INFO] Database: PostgreSQL (Supabase via libpqxx)\n";
     std::cout << "[INFO] Listening on: http://" << host << ":" << port << "\n";
@@ -912,6 +1019,7 @@ int main() {
     std::cout << "  GET  /api/demo-accounts\n";
     std::cout << "  POST /api/auth/register\n";
     std::cout << "  POST /api/auth/login\n";
+    std::cout << "  POST /api/auth/link-mobile\n";
     std::cout << "  POST /api/auth/logout\n";
     std::cout << "  GET  /api/account\n";
     std::cout << "  POST /api/deposit\n";

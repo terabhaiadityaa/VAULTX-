@@ -126,18 +126,29 @@ bool Database::verifySchema() {
         return runWithReconnect([&]() {
             pqxx::nontransaction nt(*conn);
             pqxx::result res = nt.exec(
-                "SELECT count(*) FROM information_schema.tables "
-                "WHERE table_schema = 'public' "
-                "AND table_name IN ('users', 'accounts', 'transactions', 'login_attempts');"
+                "SELECT "
+                "  (SELECT count(*) FROM information_schema.tables "
+                "   WHERE table_schema = 'public' "
+                "   AND table_name IN ('users', 'accounts', 'transactions', 'login_attempts')), "
+                "  (SELECT count(*) FROM information_schema.columns "
+                "   WHERE table_schema = 'public' "
+                "   AND table_name = 'users' "
+                "   AND column_name IN ('mobile_number', 'mobile_verified', 'mobile_linked_at'));"
             );
             lastVerifiedAt = std::chrono::steady_clock::now();
             const int tableCount = res.empty() ? 0 : res[0][0].as<int>();
+            const int mobileColCount = res.empty() ? 0 : res[0][1].as<int>();
             if (tableCount != 4) {
                 std::cerr << "Missing required PostgreSQL tables in public schema (found "
                           << tableCount << "/4)." << std::endl;
                 return false;
             }
-            std::cout << "PostgreSQL schema verified (4/4 production tables present)." << std::endl;
+            if (mobileColCount != 3) {
+                std::cerr << "Missing required mobile-auth columns on public.users (found "
+                          << mobileColCount << "/3). Run migration/add_mobile_auth.sql." << std::endl;
+                return false;
+            }
+            std::cout << "PostgreSQL schema verified (4/4 production tables and mobile columns present)." << std::endl;
             return true;
         });
     } catch (const std::exception& e) {
@@ -174,6 +185,7 @@ bool Database::accountExists(const std::string& accountNumber) {
 RegistrationResult Database::createCardAccount(
     const std::string& fullName,
     const std::string& email,
+    const std::string& mobileNumber,
     const std::string& pinHash,
     const std::string& accountNumber,
     std::int64_t initialBalancePaise,
@@ -181,7 +193,7 @@ RegistrationResult Database::createCardAccount(
 ) {
     std::lock_guard<std::mutex> lock(dbMutex);
     if (!ensureConnected()) {
-        return {false, false, false, "Database is not connected.", -1};
+        return {false, false, false, false, "Database is not connected.", -1};
     }
 
     try {
@@ -189,12 +201,13 @@ RegistrationResult Database::createCardAccount(
             pqxx::work txn(*conn);
 
             pqxx::result userRes = txn.exec_params(
-                "INSERT INTO public.users (full_name, email, pin_hash) "
-                "VALUES ($1, $2, $3) RETURNING id;",
-                fullName, email, pinHash
+                "INSERT INTO public.users (full_name, email, mobile_number, mobile_verified, mobile_linked_at, pin_hash) "
+                "VALUES ($1, $2, NULLIF($3, ''), false, CASE WHEN NULLIF($3, '') IS NOT NULL THEN CURRENT_TIMESTAMP ELSE NULL END, $4) "
+                "RETURNING id;",
+                fullName, email, mobileNumber, pinHash
             );
             if (userRes.empty()) {
-                return {false, false, false, "User registration failed.", -1};
+                return {false, false, false, false, "User registration failed.", -1};
             }
             const int userId = static_cast<int>(userRes[0][0].as<std::int64_t>());
 
@@ -204,7 +217,7 @@ RegistrationResult Database::createCardAccount(
                 static_cast<std::int64_t>(userId), accountNumber, initialBalancePaise
             );
             if (accRes.empty()) {
-                return {false, false, false, "Account creation failed.", -1};
+                return {false, false, false, false, "Account creation failed.", -1};
             }
             const std::int64_t accountId = accRes[0][0].as<std::int64_t>();
 
@@ -219,22 +232,26 @@ RegistrationResult Database::createCardAccount(
 
             txn.commit();
             lastVerifiedAt = std::chrono::steady_clock::now();
-            return {true, false, false, "User registered successfully.", userId};
+            return {true, false, false, false, "User registered successfully.", userId};
         });
     } catch (const pqxx::unique_violation& e) {
         const std::string err = e.what();
+        if (err.find("uq_users_mobile_number_not_null") != std::string::npos ||
+            err.find("mobile_number") != std::string::npos) {
+            return {false, false, true, false, "This mobile number is already registered.", -1};
+        }
         if (err.find("users_email_key") != std::string::npos ||
             err.find("email") != std::string::npos) {
-            return {false, true, false, "This email is already registered.", -1};
+            return {false, true, false, false, "This email is already registered.", -1};
         }
         if (err.find("accounts_account_number_key") != std::string::npos ||
             err.find("account_number") != std::string::npos) {
-            return {false, false, true, "Account number collision; retrying.", -1};
+            return {false, false, false, true, "Account number collision; retrying.", -1};
         }
-        return {false, false, false, "Registration conflict occurred.", -1};
+        return {false, false, false, false, "Registration conflict occurred.", -1};
     } catch (const std::exception& e) {
         std::cerr << "createCardAccount error: " << e.what() << std::endl;
-        return {false, false, false, "Registration could not be completed.", -1};
+        return {false, false, false, false, "Registration could not be completed.", -1};
     }
 }
 
@@ -353,9 +370,9 @@ bool Database::recordFailedLoginAttempt(
     }
 }
 
-UserAuthRecord Database::findUserForLogin(const std::string& identifier) {
+UserAuthRecord Database::findUserForLogin(const std::string& canonicalMobile) {
     UserAuthRecord record;
-    if (identifier.empty()) return record;
+    if (canonicalMobile.empty()) return record;
     std::lock_guard<std::mutex> lock(dbMutex);
     if (!ensureConnected()) return record;
 
@@ -364,19 +381,19 @@ UserAuthRecord Database::findUserForLogin(const std::string& identifier) {
             UserAuthRecord out;
             pqxx::nontransaction nt(*conn);
             pqxx::result res = nt.exec_params(
-                "SELECT u.id, u.email, u.pin_hash "
+                "SELECT u.id, u.email, COALESCE(u.mobile_number, ''), u.pin_hash "
                 "FROM public.users u "
-                "LEFT JOIN public.accounts a ON a.user_id = u.id "
-                "WHERE a.account_number = $1 OR u.email = $1 "
+                "WHERE u.mobile_number = $1 "
                 "LIMIT 1;",
-                identifier
+                canonicalMobile
             );
             lastVerifiedAt = std::chrono::steady_clock::now();
             if (!res.empty()) {
                 out.found = true;
                 out.userId = static_cast<int>(res[0][0].as<std::int64_t>());
                 out.email = fieldAsString(res[0][1]);
-                out.pinHash = fieldAsString(res[0][2]);
+                out.mobileNumber = fieldAsString(res[0][2]);
+                out.pinHash = fieldAsString(res[0][3]);
             }
             return out;
         });
@@ -384,6 +401,84 @@ UserAuthRecord Database::findUserForLogin(const std::string& identifier) {
         std::cerr << "findUserForLogin error: " << e.what() << std::endl;
     }
     return record;
+}
+
+UserAuthRecord Database::findLegacyUserForLinking(const std::string& legacyIdentifier) {
+    UserAuthRecord record;
+    if (legacyIdentifier.empty()) return record;
+    std::lock_guard<std::mutex> lock(dbMutex);
+    if (!ensureConnected()) return record;
+
+    try {
+        return runWithReconnect([&]() {
+            UserAuthRecord out;
+            pqxx::nontransaction nt(*conn);
+            pqxx::result res = nt.exec_params(
+                "SELECT u.id, u.email, COALESCE(u.mobile_number, ''), u.pin_hash "
+                "FROM public.users u "
+                "LEFT JOIN public.accounts a ON a.user_id = u.id "
+                "WHERE a.account_number = $1 OR lower(u.email) = lower($1) "
+                "LIMIT 1;",
+                legacyIdentifier
+            );
+            lastVerifiedAt = std::chrono::steady_clock::now();
+            if (!res.empty()) {
+                out.found = true;
+                out.userId = static_cast<int>(res[0][0].as<std::int64_t>());
+                out.email = fieldAsString(res[0][1]);
+                out.mobileNumber = fieldAsString(res[0][2]);
+                out.pinHash = fieldAsString(res[0][3]);
+            }
+            return out;
+        });
+    } catch (const std::exception& e) {
+        std::cerr << "findLegacyUserForLinking error: " << e.what() << std::endl;
+    }
+    return record;
+}
+
+LinkMobileResult Database::linkMobileNumberToUser(int userId, const std::string& canonicalMobile) {
+    if (userId <= 0 || canonicalMobile.empty()) {
+        return {false, false, false, "Valid user and mobile number are required."};
+    }
+    std::lock_guard<std::mutex> lock(dbMutex);
+    if (!ensureConnected()) {
+        return {false, false, false, "Database is not connected."};
+    }
+
+    try {
+        return runWithReconnect([&]() -> LinkMobileResult {
+            pqxx::work txn(*conn);
+            pqxx::result selRes = txn.exec_params(
+                "SELECT COALESCE(mobile_number, '') FROM public.users WHERE id = $1 FOR UPDATE;",
+                static_cast<std::int64_t>(userId)
+            );
+            if (selRes.empty()) {
+                return {false, false, false, "Account could not be updated."};
+            }
+            if (!fieldAsString(selRes[0][0]).empty()) {
+                return {false, true, false, "This account already has a linked mobile number."};
+            }
+
+            pqxx::result updRes = txn.exec_params(
+                "UPDATE public.users "
+                "SET mobile_number = $1, mobile_verified = false, mobile_linked_at = CURRENT_TIMESTAMP "
+                "WHERE id = $2 AND mobile_number IS NULL;",
+                canonicalMobile, static_cast<std::int64_t>(userId)
+            );
+            if (updRes.affected_rows() != 1) {
+                return {false, true, false, "This account already has a linked mobile number."};
+            }
+            txn.commit();
+            lastVerifiedAt = std::chrono::steady_clock::now();
+            return {true, false, false, "Mobile number linked successfully."};
+        });
+    } catch (const pqxx::unique_violation&) {
+        return {false, false, true, "Unable to link this mobile number. Please use a different mobile number."};
+    } catch (const std::exception& e) {
+        std::cerr << "linkMobileNumberToUser error: " << e.what() << std::endl;
+        return {false, false, false, "Could not link mobile number."};
+    }
 }
 
 AccountLoginStatus Database::findAccountForUser(int userId) {
@@ -564,7 +659,8 @@ AccountDetails Database::getAccountDetailsForUser(int userId) {
             AccountDetails out;
             pqxx::nontransaction nt(*conn);
             pqxx::result res = nt.exec_params(
-                "SELECT u.id, u.full_name, u.email, a.id, a.account_number, a.balance_paise, a.status, "
+                "SELECT u.id, u.full_name, u.email, COALESCE(u.mobile_number, ''), u.mobile_verified, "
+                "       a.id, a.account_number, a.balance_paise, a.status, "
                 "       TO_CHAR(a.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') "
                 "FROM public.users u "
                 "JOIN public.accounts a ON u.id = a.user_id "
@@ -577,11 +673,13 @@ AccountDetails Database::getAccountDetailsForUser(int userId) {
                 out.userId = static_cast<int>(res[0][0].as<std::int64_t>());
                 out.fullName = fieldAsString(res[0][1]);
                 out.email = fieldAsString(res[0][2]);
-                out.accountId = res[0][3].as<std::int64_t>();
-                out.accountNumber = fieldAsString(res[0][4]);
-                out.balancePaise = res[0][5].as<std::int64_t>();
-                out.status = fieldAsString(res[0][6]);
-                out.createdAt = fieldAsString(res[0][7]);
+                out.mobileNumber = fieldAsString(res[0][3]);
+                out.mobileVerified = !res[0][4].is_null() && res[0][4].as<bool>();
+                out.accountId = res[0][5].as<std::int64_t>();
+                out.accountNumber = fieldAsString(res[0][6]);
+                out.balancePaise = res[0][7].as<std::int64_t>();
+                out.status = fieldAsString(res[0][8]);
+                out.createdAt = fieldAsString(res[0][9]);
             }
             return out;
         });

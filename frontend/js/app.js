@@ -32,20 +32,35 @@ const tabLoginBtn = document.getElementById('tabLoginBtn');
 const tabRegisterBtn = document.getElementById('tabRegisterBtn');
 const loginView = document.getElementById('loginView');
 const registerView = document.getElementById('registerView');
+const linkMobileView = document.getElementById('linkMobileView');
 const loginForm = document.getElementById('loginForm');
 const registerForm = document.getElementById('registerForm');
-const loginIdentifier = document.getElementById('loginIdentifier');
+const linkMobileForm = document.getElementById('linkMobileForm');
+const loginCountryCode = document.getElementById('loginCountryCode');
+const loginMobile = document.getElementById('loginMobile');
 const loginPin = document.getElementById('loginPin');
 const loginSubmitBtn = document.getElementById('loginSubmitBtn');
+const goToRegisterBtn = document.getElementById('goToRegisterBtn');
+const goToLinkMobileBtn = document.getElementById('goToLinkMobileBtn');
+const backToLoginBtn = document.getElementById('backToLoginBtn');
 const regFullName = document.getElementById('regFullName');
+const regCountryCode = document.getElementById('regCountryCode');
+const regMobile = document.getElementById('regMobile');
 const regPin = document.getElementById('regPin');
+const regConfirmPin = document.getElementById('regConfirmPin');
 const regSubmitBtn = document.getElementById('regSubmitBtn');
+const linkLegacyId = document.getElementById('linkLegacyId');
+const linkPin = document.getElementById('linkPin');
+const linkCountryCode = document.getElementById('linkCountryCode');
+const linkMobile = document.getElementById('linkMobile');
+const linkSubmitBtn = document.getElementById('linkSubmitBtn');
 
 // Dashboard DOM
 const cardAccountNumber = document.getElementById('cardAccountNumber');
 const cardHolderName = document.getElementById('cardHolderName');
 const dashboardBalanceDisplay = document.getElementById('dashboardBalanceDisplay');
 const statAccountNumber = document.getElementById('statAccountNumber');
+const statMobileNumber = document.getElementById('statMobileNumber');
 const refreshBalanceBtn = document.getElementById('refreshBalanceBtn');
 
 // Action Tabs DOM
@@ -163,8 +178,64 @@ function calculateDenominations(amount) {
   return `Dispensing notes: ${parts.join(', ')}`;
 }
 
-// Auto-format card numbers with spaces as typed
+// Country validation rules (mirrors backend PhoneUtils.cpp; backend enforces independently)
+const COUNTRY_PHONE_RULES = {
+  '+91':  { min: 10, max: 10, regex: /^[6-9]\d{9}$/, label: 'Enter a valid 10-digit Indian mobile number (starts with 6-9).' },
+  '+1':   { min: 10, max: 10, regex: /^[2-9]\d{9}$/, label: 'Enter a valid 10-digit US/Canada mobile number.' },
+  '+44':  { min: 10, max: 10, regex: /^[1-9]\d{9}$/, label: 'Enter a valid 10-digit UK mobile number.' },
+  '+61':  { min: 9,  max: 9,  regex: /^[2-9]\d{8}$/, label: 'Enter a valid 9-digit Australian mobile number.' },
+  '+65':  { min: 8,  max: 8,  regex: /^[3689]\d{7}$/, label: 'Enter a valid 8-digit Singapore mobile number.' },
+  '+971': { min: 9,  max: 9,  regex: /^[2-9]\d{8}$/, label: 'Enter a valid 9-digit UAE mobile number.' },
+  '+49':  { min: 10, max: 11, regex: /^[1-9]\d{9,10}$/, label: 'Enter a valid 10-11 digit German mobile number.' },
+  '+33':  { min: 9,  max: 9,  regex: /^[1-9]\d{8}$/, label: 'Enter a valid 9-digit French mobile number.' },
+  '+81':  { min: 10, max: 10, regex: /^[1-9]\d{9}$/, label: 'Enter a valid 10-digit Japanese mobile number.' }
+};
+
+function normalizeMobileInputClient(countryCode, rawNumber) {
+  const cc = String(countryCode || '').trim();
+  const rule = COUNTRY_PHONE_RULES[cc];
+  if (!rule) {
+    return { valid: false, error: 'Please select a valid country code.' };
+  }
+
+  let cleaned = String(rawNumber || '').replace(/\s+/g, '');
+  if (!cleaned) {
+    return { valid: false, error: 'Mobile number is required.' };
+  }
+  if (/[^0-9+\-()]/.test(cleaned)) {
+    return { valid: false, error: 'Mobile number may contain digits only (no letters or symbols).' };
+  }
+
+  const ccDigits = cc.slice(1);
+  let digits = cleaned.replace(/\D/g, '');
+  if (digits.length > rule.max && digits.startsWith(ccDigits)) {
+    const stripped = digits.slice(ccDigits.length);
+    if (stripped.length >= rule.min && stripped.length <= rule.max + 1) {
+      digits = stripped;
+    }
+  }
+  if (digits.length === rule.max + 1 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
+  if (!rule.regex.test(digits)) {
+    return { valid: false, error: rule.label };
+  }
+  return { valid: true, countryCode: cc, nationalNumber: digits, e164: `${cc}${digits}` };
+}
+
+function attachPhoneDigitFilter(input) {
+  if (!input) return;
+  input.addEventListener('input', (e) => {
+    const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 15);
+    if (e.target.value !== digitsOnly) {
+      e.target.value = digitsOnly;
+    }
+  });
+}
+
+// Auto-format card numbers / sanitize phone inputs
 function attachCardNumberFormatter(input) {
+  if (!input) return;
   input.addEventListener('input', (e) => {
     let value = e.target.value.replace(/\D/g, '');
     if (value.length > 16) value = value.substring(0, 16);
@@ -173,7 +244,9 @@ function attachCardNumberFormatter(input) {
   });
 }
 
-attachCardNumberFormatter(loginIdentifier);
+attachPhoneDigitFilter(loginMobile);
+attachPhoneDigitFilter(regMobile);
+attachPhoneDigitFilter(linkMobile);
 attachCardNumberFormatter(transferTargetInput);
 
 
@@ -373,6 +446,7 @@ function resetPinVisibility() {
 function clearDashboardUI() {
   headerAccountNum.textContent = '—';
   statAccountNumber.textContent = '—';
+  if (statMobileNumber) statMobileNumber.textContent = '—';
   cardAccountNumber.textContent = '•••• •••• •••• ••••';
   cardHolderName.textContent = 'SIMULATED USER';
   dashboardBalanceDisplay.textContent = '₹ 0.00';
@@ -380,6 +454,7 @@ function clearDashboardUI() {
   withdrawForm.reset();
   depositForm.reset();
   transferForm.reset();
+  if (linkMobileForm) linkMobileForm.reset();
   receiptModal.style.display = 'none';
   currentFilter = 'all';
   filterPills.forEach(p => {
@@ -388,12 +463,21 @@ function clearDashboardUI() {
   transactionTableBody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading transaction records...</td></tr>';
 }
 
+function showAuthPanel(panel) {
+  if (loginView) loginView.style.display = panel === 'login' ? 'block' : 'none';
+  if (registerView) registerView.style.display = panel === 'register' ? 'block' : 'none';
+  if (linkMobileView) linkMobileView.style.display = panel === 'link' ? 'block' : 'none';
+  tabLoginBtn.classList.toggle('active', panel !== 'register');
+  tabRegisterBtn.classList.toggle('active', panel === 'register');
+  resetPinVisibility();
+}
+
 function showAuthView() {
   authSection.style.display = 'block';
   dashboardSection.style.display = 'none';
   userQuickInfo.style.display = 'none';
   clearDashboardUI();
-  resetPinVisibility();
+  showAuthPanel('login');
 }
 
 function showDashboardView() {
@@ -411,10 +495,12 @@ function updateDashboardUI() {
 
   const accNum = acc.accountNumber || '—';
   const fullName = user.fullName || 'SIMULATED CARDHOLDER';
+  const mobile = user.mobileNumber || 'Not linked';
   const balance = acc.balance || 0;
 
   headerAccountNum.textContent = formatCardDisplay(accNum);
   statAccountNumber.textContent = formatCardDisplay(accNum);
+  if (statMobileNumber) statMobileNumber.textContent = mobile;
   cardAccountNumber.textContent = formatCardDisplay(accNum);
   cardHolderName.textContent = fullName.toUpperCase();
   dashboardBalanceDisplay.textContent = formatRupees(balance);
@@ -426,21 +512,34 @@ function updateDashboardUI() {
 
 tabLoginBtn.addEventListener('click', () => {
   if (isAuthSubmitting) return;
-  tabLoginBtn.classList.add('active');
-  tabRegisterBtn.classList.remove('active');
-  loginView.style.display = 'block';
-  registerView.style.display = 'none';
-  resetPinVisibility();
+  showAuthPanel('login');
 });
 
 tabRegisterBtn.addEventListener('click', () => {
   if (isAuthSubmitting) return;
-  tabRegisterBtn.classList.add('active');
-  tabLoginBtn.classList.remove('active');
-  registerView.style.display = 'block';
-  loginView.style.display = 'none';
-  resetPinVisibility();
+  showAuthPanel('register');
 });
+
+if (goToRegisterBtn) {
+  goToRegisterBtn.addEventListener('click', () => {
+    if (isAuthSubmitting) return;
+    showAuthPanel('register');
+  });
+}
+
+if (goToLinkMobileBtn) {
+  goToLinkMobileBtn.addEventListener('click', () => {
+    if (isAuthSubmitting) return;
+    showAuthPanel('link');
+  });
+}
+
+if (backToLoginBtn) {
+  backToLoginBtn.addEventListener('click', () => {
+    if (isAuthSubmitting) return;
+    showAuthPanel('login');
+  });
+}
 
 document.querySelectorAll('.pin-toggle-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -486,18 +585,46 @@ logoutBtn.addEventListener('click', async () => {
 });
 
 // ==========================================================================
-// Form Submission: Login via Card Number & PIN
+// Form Submission: Login via Mobile Number & 6-Digit PIN
 // ==========================================================================
+
+async function applyAuthenticatedPayload(data, fallbackName = 'Cardholder', fallbackMobile = '') {
+  storeToken(data.sessionToken);
+
+  const accRes = await apiRequest('/api/account', {
+    headers: { 'Authorization': `Bearer ${sessionToken}` }
+  });
+
+  if (accRes.ok) {
+    currentAccount = accRes.data;
+  } else {
+    currentAccount = {
+      user: {
+        fullName: data.fullName || fallbackName,
+        email: data.email || '',
+        mobileNumber: data.mobileNumber || fallbackMobile
+      },
+      account: {
+        accountNumber: data.accountNumber,
+        balance: typeof data.balance === 'number' ? data.balance : 10000.0,
+        balancePaise: typeof data.balancePaise === 'number' ? data.balancePaise : 1000000
+      }
+    };
+  }
+
+  showDashboardView();
+  await fetchTransactions();
+}
 
 loginForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (isAuthSubmitting || loginSubmitBtn.disabled) return;
 
-  const rawAcc = loginIdentifier.value.replace(/\s+/g, '').replace(/-/g, '').trim();
+  const phoneCheck = normalizeMobileInputClient(loginCountryCode.value, loginMobile.value);
   const pin = loginPin.value.trim();
 
-  if (!rawAcc || rawAcc.length < 8) {
-    showToast('Please enter a valid VAULTX Card / Account Number.', 'error');
+  if (!phoneCheck.valid) {
+    showToast(phoneCheck.error, 'error');
     return;
   }
   if (!/^\d{6}$/.test(pin)) {
@@ -507,7 +634,7 @@ loginForm.addEventListener('submit', async (e) => {
 
   isAuthSubmitting = true;
   loginSubmitBtn.disabled = true;
-  loginSubmitBtn.querySelector('span').textContent = 'Reading Card…';
+  loginSubmitBtn.querySelector('span').textContent = 'Authenticating…';
 
   try {
     const authRes = await apiRequest(
@@ -515,9 +642,14 @@ loginForm.addEventListener('submit', async (e) => {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountNumber: rawAcc, pin: pin })
+        body: JSON.stringify({
+          countryCode: phoneCheck.countryCode,
+          mobileNumber: phoneCheck.nationalNumber,
+          mobile_number: phoneCheck.e164,
+          pin: pin
+        })
       },
-      'Authentication failed. Check card number or PIN.'
+      'Authentication failed. Check mobile number or PIN.'
     );
 
     if (!authRes.ok) {
@@ -526,39 +658,22 @@ loginForm.addEventListener('submit', async (e) => {
     }
 
     const data = authRes.data;
-    storeToken(data.sessionToken);
-    showToast(`Card Authenticated! Welcome, ${data.fullName || 'Cardholder'}.`, 'success');
-
-    // Fetch complete account info
-    const accRes = await apiRequest('/api/account', {
-      headers: { 'Authorization': `Bearer ${sessionToken}` }
-    });
-
-    if (accRes.ok) {
-      currentAccount = accRes.data;
-    } else {
-      currentAccount = {
-        user: { fullName: data.fullName, email: data.email },
-        account: { accountNumber: data.accountNumber, balance: data.balance, balancePaise: data.balancePaise }
-      };
-    }
-
     loginForm.reset();
     resetPinVisibility();
-    showDashboardView();
-    await fetchTransactions();
+    showToast(`Authenticated! Welcome, ${data.fullName || 'Cardholder'}.`, 'success');
+    await applyAuthenticatedPayload(data, 'Cardholder', phoneCheck.e164);
   } catch (err) {
     console.error('Login error:', err);
     showToast('Communication error with VAULTX terminal.', 'error');
   } finally {
     isAuthSubmitting = false;
     loginSubmitBtn.disabled = false;
-    loginSubmitBtn.querySelector('span').textContent = 'Insert Card & Authenticate';
+    loginSubmitBtn.querySelector('span').textContent = 'Login with Mobile & PIN';
   }
 });
 
 // ==========================================================================
-// Form Submission: Issue New Card (Registration)
+// Form Submission: Issue New Card (Registration with Mobile & Confirm PIN)
 // ==========================================================================
 
 registerForm.addEventListener('submit', async (e) => {
@@ -566,14 +681,24 @@ registerForm.addEventListener('submit', async (e) => {
   if (isAuthSubmitting || regSubmitBtn.disabled) return;
 
   const fullName = regFullName.value.trim();
+  const phoneCheck = normalizeMobileInputClient(regCountryCode.value, regMobile.value);
   const pin = regPin.value.trim();
+  const confirmPin = regConfirmPin.value.trim();
 
   if (!fullName || fullName.length < 2 || fullName.length > 100) {
     showToast('Cardholder full name must be between 2 and 100 characters.', 'error');
     return;
   }
+  if (!phoneCheck.valid) {
+    showToast(phoneCheck.error, 'error');
+    return;
+  }
   if (!/^\d{6}$/.test(pin)) {
     showToast('ATM PIN must be exactly 6 numeric digits.', 'error');
+    return;
+  }
+  if (pin !== confirmPin) {
+    showToast('PIN and Confirm PIN do not match.', 'error');
     return;
   }
 
@@ -587,7 +712,14 @@ registerForm.addEventListener('submit', async (e) => {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fullName, pin })
+        body: JSON.stringify({
+          fullName,
+          countryCode: phoneCheck.countryCode,
+          mobileNumber: phoneCheck.nationalNumber,
+          mobile_number: phoneCheck.e164,
+          pin,
+          confirmPin
+        })
       },
       'Card issuance failed'
     );
@@ -599,50 +731,33 @@ registerForm.addEventListener('submit', async (e) => {
 
     const data = regRes.data;
     const newAccNum = data.accountNumber;
+    const issuedMobile = data.mobileNumber || phoneCheck.e164;
     registerForm.reset();
     resetPinVisibility();
-    showToast(`New Card Issued: ${formatCardDisplay(newAccNum)} with ₹10,000 balance!`, 'success', 5000);
+    showToast(`New Card Issued: ${formatCardDisplay(newAccNum)} linked to ${issuedMobile} (₹10,000 balance)!`, 'success', 5000);
 
-    // Auto-login with the newly issued card
+    // Auto-login with registered mobile number & PIN
     regSubmitBtn.querySelector('span').textContent = 'Activating Terminal…';
     const loginRes = await apiRequest(
       '/api/auth/login',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountNumber: newAccNum, pin: pin })
+        body: JSON.stringify({
+          mobile_number: issuedMobile,
+          pin: pin
+        })
       },
-      'Card issued, please sign in with your new card number.'
+      'Card issued, please sign in with your mobile number.'
     );
 
     if (loginRes.ok && loginRes.data.sessionToken) {
-      const loginData = loginRes.data;
-      storeToken(loginData.sessionToken);
-
-      const accRes = await apiRequest('/api/account', {
-        headers: { 'Authorization': `Bearer ${sessionToken}` }
-      });
-
-      if (accRes.ok) {
-        currentAccount = accRes.data;
-      } else {
-        currentAccount = {
-          user: { fullName: loginData.fullName || fullName, email: loginData.email || '' },
-          account: {
-            accountNumber: loginData.accountNumber || newAccNum,
-            balance: typeof loginData.balance === 'number' ? loginData.balance : 10000.0,
-            balancePaise: typeof loginData.balancePaise === 'number' ? loginData.balancePaise : 1000000
-          }
-        };
-      }
-
-      showDashboardView();
-      await fetchTransactions();
+      await applyAuthenticatedPayload(loginRes.data, fullName, issuedMobile);
     } else {
       isAuthSubmitting = false;
-      tabLoginBtn.click();
-      loginIdentifier.value = formatCardDisplay(newAccNum);
-      loginPin.value = pin;
+      showAuthPanel('login');
+      loginCountryCode.value = phoneCheck.countryCode;
+      loginMobile.value = phoneCheck.nationalNumber;
       showToast(`Card #${formatCardDisplay(newAccNum)} created, but auto-login failed: ${loginRes.errorMessage}`, 'error', 6000);
     }
   } catch (err) {
@@ -654,6 +769,73 @@ registerForm.addEventListener('submit', async (e) => {
     regSubmitBtn.querySelector('span').textContent = 'Issue VAULTX Card & Claim ₹10,000';
   }
 });
+
+// ==========================================================================
+// Form Submission: Link Mobile Number to Legacy Unlinked Account
+// ==========================================================================
+
+if (linkMobileForm) {
+  linkMobileForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (isAuthSubmitting || linkSubmitBtn.disabled) return;
+
+    const identifier = linkLegacyId.value.trim();
+    const pin = linkPin.value.trim();
+    const phoneCheck = normalizeMobileInputClient(linkCountryCode.value, linkMobile.value);
+
+    if (!identifier || identifier.length < 3) {
+      showToast('Enter your existing 12-digit Card Number or registered Email.', 'error');
+      return;
+    }
+    if (!/^\d{6}$/.test(pin)) {
+      showToast('ATM PIN must be exactly 6 numeric digits.', 'error');
+      return;
+    }
+    if (!phoneCheck.valid) {
+      showToast(phoneCheck.error, 'error');
+      return;
+    }
+
+    isAuthSubmitting = true;
+    linkSubmitBtn.disabled = true;
+    linkSubmitBtn.querySelector('span').textContent = 'Linking Mobile…';
+
+    try {
+      const linkRes = await apiRequest(
+        '/api/auth/link-mobile',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            identifier,
+            pin,
+            countryCode: phoneCheck.countryCode,
+            mobileNumber: phoneCheck.nationalNumber,
+            mobile_number: phoneCheck.e164
+          })
+        },
+        'Could not link mobile number'
+      );
+
+      if (!linkRes.ok || !linkRes.data.sessionToken) {
+        showToast(linkRes.errorMessage, 'error');
+        return;
+      }
+
+      linkMobileForm.reset();
+      resetPinVisibility();
+      showToast(`Mobile ${linkRes.data.mobileNumber || phoneCheck.e164} linked successfully!`, 'success', 4500);
+      await applyAuthenticatedPayload(linkRes.data, 'Cardholder', phoneCheck.e164);
+    } catch (err) {
+      console.error('Link mobile error:', err);
+      showToast('Communication error with VAULTX terminal.', 'error');
+    } finally {
+      isAuthSubmitting = false;
+      linkSubmitBtn.disabled = false;
+      linkSubmitBtn.querySelector('span').textContent = 'Link Mobile Number & Sign In';
+    }
+  });
+}
 
 // ==========================================================================
 // Operations: Tabs

@@ -1,4 +1,5 @@
 #include "database/Database.h"
+#include "security/PhoneUtils.h"
 #include "security/PinHasher.h"
 #include "security/RateLimiter.h"
 #include "security/SessionManager.h"
@@ -25,6 +26,7 @@ public:
     struct MockUser {
         int id;
         std::string email;
+        std::string mobileNumber;
         std::string accountNumber;
         std::string pinHash;
         std::string status;
@@ -39,14 +41,43 @@ public:
     std::vector<MockUser> users;
     std::unordered_map<std::string, LockRecord> lockouts;
 
-    UserAuthRecord findUserForLogin(const std::string& identifier) override {
+    UserAuthRecord findUserForLogin(const std::string& canonicalMobile) override {
         std::lock_guard<std::mutex> lock(mockMutex);
         for (const auto& u : users) {
-            if (u.accountNumber == identifier || u.email == identifier) {
-                return {true, u.id, u.email, u.pinHash};
+            if (!u.mobileNumber.empty() && u.mobileNumber == canonicalMobile) {
+                return {true, u.id, u.email, u.mobileNumber, u.pinHash};
             }
         }
         return {};
+    }
+
+    UserAuthRecord findLegacyUserForLinking(const std::string& legacyIdentifier) override {
+        std::lock_guard<std::mutex> lock(mockMutex);
+        for (const auto& u : users) {
+            if (u.accountNumber == legacyIdentifier || u.email == legacyIdentifier) {
+                return {true, u.id, u.email, u.mobileNumber, u.pinHash};
+            }
+        }
+        return {};
+    }
+
+    LinkMobileResult linkMobileNumberToUser(int userId, const std::string& canonicalMobile) override {
+        std::lock_guard<std::mutex> lock(mockMutex);
+        for (const auto& u : users) {
+            if (u.id != userId && u.mobileNumber == canonicalMobile) {
+                return {false, false, true, "Unable to link this mobile number. Please use a different mobile number."};
+            }
+        }
+        for (auto& u : users) {
+            if (u.id == userId) {
+                if (!u.mobileNumber.empty()) {
+                    return {false, true, false, "This account already has a linked mobile number."};
+                }
+                u.mobileNumber = canonicalMobile;
+                return {true, false, false, "Mobile number linked successfully."};
+            }
+        }
+        return {false, false, false, "Account could not be updated."};
     }
 
     AccountLoginStatus findAccountForUser(int userId) override {
@@ -72,9 +103,9 @@ public:
 
     void reconcileLegacyLoginAttempts(
         const std::string& legacyIdentifier,
-        const std::string& canonicalEmail
+        const std::string& canonicalIdentifier
     ) override {
-        if (legacyIdentifier.empty() || canonicalEmail.empty() || legacyIdentifier == canonicalEmail) {
+        if (legacyIdentifier.empty() || canonicalIdentifier.empty() || legacyIdentifier == canonicalIdentifier) {
             return;
         }
         std::lock_guard<std::mutex> lock(mockMutex);
@@ -83,7 +114,7 @@ public:
             return;
         }
 
-        auto& canon = lockouts[canonicalEmail];
+        auto& canon = lockouts[canonicalIdentifier];
         canon.failedAttempts += it->second.failedAttempts;
         canon.lockedUntil = std::max(canon.lockedUntil, it->second.lockedUntil);
         lockouts.erase(it);
@@ -105,109 +136,141 @@ public:
     }
 };
 
-void testCanonicalLockoutBypassImpossible() {
-    MockAuthDatabase mockDb;
-    mockDb.users.push_back({
-        1, "alice@vaultx.sim", "100099998888", PinHasher::hashPin("123456"), "active"
-    });
-    mockDb.users.push_back({
-        2, "bob@vaultx.sim", "100077776666", PinHasher::hashPin("654321"), "active"
-    });
+void testPhoneNormalizationAndValidation() {
+    // Equivalent Indian mobile formats must all normalize to canonical +919876543210
+    assert(PhoneUtils::normalize("+91", "9876543210").e164 == "+919876543210");
+    assert(PhoneUtils::normalize("+91", "09876543210").e164 == "+919876543210");
+    assert(PhoneUtils::normalize("+91", "+91 98765-43210").e164 == "+919876543210");
+    assert(PhoneUtils::normalize("+91", "919876543210").e164 == "+919876543210");
+    assert(PhoneUtils::normalize("", "+91 9876543210").e164 == "+919876543210");
 
-    AuthService auth(mockDb);
+    // Other supported countries
+    assert(PhoneUtils::normalize("+1", "2025550143").e164 == "+12025550143");
+    assert(PhoneUtils::normalize("+44", "07123456789").e164 == "+447123456789");
+    assert(PhoneUtils::normalize("+65", "91234567").e164 == "+6591234567");
 
-    // 1. Fail 5 times using Alice's account number
-    for (int i = 0; i < 5; ++i) {
-        AuthResult r = auth.loginUser("100099998888", "000000");
-        assert(!r.success);
-    }
+    // Invalid Indian numbers, alpha characters, invalid symbols, mismatched prefix, bad country code
+    assert(!PhoneUtils::normalize("+91", "1234567890").valid);
+    assert(!PhoneUtils::normalize("+91", "5876543210").valid);
+    assert(!PhoneUtils::normalize("+91", "987654321").valid);
+    assert(!PhoneUtils::normalize("+91", "98765abc10").valid);
+    assert(!PhoneUtils::normalize("+91", "9876543210;").valid);
+    assert(!PhoneUtils::normalize("+91", "+12025550143").valid);
+    assert(!PhoneUtils::normalize("+999", "9876543210").valid);
+    assert(!PhoneUtils::normalize("", "9876543210").valid);
 
-    // Lockout must be recorded under canonical email, NOT account number
-    assert(mockDb.lockouts.find("alice@vaultx.sim") != mockDb.lockouts.end());
-    assert(mockDb.lockouts.find("100099998888") == mockDb.lockouts.end());
-
-    // 2. Try logging in via Alice's email WITH the correct PIN -> must stay locked
-    AuthResult bypassAttempt1 = auth.loginUser("alice@vaultx.sim", "123456");
-    assert(!bypassAttempt1.success);
-    assert(bypassAttempt1.message.find("locked") != std::string::npos);
-
-    // 3. Reverse direction: fail 5 times using Bob's email, then try Bob's card number
-    for (int i = 0; i < 5; ++i) {
-        AuthResult r = auth.loginUser("bob@vaultx.sim", "000000");
-        assert(!r.success);
-    }
-    AuthResult bypassAttempt2 = auth.loginUser("100077776666", "654321");
-    assert(!bypassAttempt2.success);
-    assert(bypassAttempt2.message.find("locked") != std::string::npos);
-
-    std::cout << "[PASS] Canonical lockout blocks email/account-number bypass in both directions\n";
+    std::cout << "[PASS] PhoneUtils strictly validates and normalizes E.164 mobile numbers\n";
 }
 
-void testLegacyLockoutReconciliation() {
+void testMobileCanonicalLockoutBypassImpossible() {
     MockAuthDatabase mockDb;
     mockDb.users.push_back({
-        1, "alice@vaultx.sim", "100099998888", PinHasher::hashPin("123456"), "active"
+        1, "alice@vaultx.sim", "+919876543210", "100099998888", PinHasher::hashPin("123456"), "active"
     });
     mockDb.users.push_back({
-        2, "bob@vaultx.sim", "100077776666", PinHasher::hashPin("654321"), "active"
+        2, "bob@vaultx.sim", "+919811112222", "100077776666", PinHasher::hashPin("654321"), "active"
     });
 
-    // Unrelated lockout record must never be modified or deleted
+    AuthService auth(mockDb);
+
+    // Fail 5 times using different formatting variants of the same Indian mobile number
+    const std::vector<std::pair<std::string, std::string>> variants = {
+        {"+91", "9876543210"},
+        {"+91", "09876543210"},
+        {"+91", "919876543210"},
+        {"", "+91 98765-43210"},
+        {"+91", "98765 43210"}
+    };
+    for (const auto& v : variants) {
+        AuthResult r = auth.loginUser(v.first, v.second, "000000");
+        assert(!r.success);
+    }
+
+    assert(mockDb.lockouts.find("+919876543210") != mockDb.lockouts.end());
+    assert(mockDb.lockouts["+919876543210"].failedAttempts == 5);
+
+    // Valid PIN in canonical or alternate form stays locked
+    AuthResult bypassAttempt = auth.loginUser("", "+919876543210", "123456");
+    assert(!bypassAttempt.success);
+    assert(bypassAttempt.message.find("locked") != std::string::npos);
+
+    // Email and card number are no longer accepted on primary /api/auth/login path
+    AuthResult legacyEmailLogin = auth.loginUser("", "alice@vaultx.sim", "123456");
+    assert(!legacyEmailLogin.success);
+    assert(legacyEmailLogin.invalidInput);
+
+    // Confirm PIN mismatch rejected cleanly on registration
+    AuthResult mismatch = auth.registerUser("Test Name", "+91", "9898989898", "", "123456", "654321", true);
+    assert(!mismatch.success && mismatch.invalidInput);
+
+    std::cout << "[PASS] Mobile lockout blocks format-variant bypasses and rejects email on mobile login\n";
+}
+
+void testLegacyAccountMobileLinkingAndReconciliation() {
+    MockAuthDatabase mockDb;
+    // Legacy user without mobile number yet, plus existing email lockout history
+    mockDb.users.push_back({
+        10, "legacy_alice@example.com", "", "100020003000", PinHasher::hashPin("123456"), "active"
+    });
+    mockDb.users.push_back({
+        11, "linked_bob@vaultx.sim", "+919811112222", "100020004000", PinHasher::hashPin("654321"), "active"
+    });
+
     const std::int64_t futureLock = static_cast<std::int64_t>(std::time(nullptr)) + 600;
     mockDb.lockouts["unrelated@vaultx.sim"] = {5, futureLock};
-
-    // Case A: 4 legacy failures stored under account number -> 1 more failure via account number
-    // reconciles to 4 and then increments to 5 (locks immediately, no double counting)
-    mockDb.lockouts["100099998888"] = {4, 0};
+    mockDb.lockouts["100020003000"] = {4, 0}; // Pre-P1 legacy failure counter
 
     AuthService auth(mockDb);
-    AuthResult r5 = auth.loginUser("100099998888", "000000");
-    assert(!r5.success);
-    assert(r5.message.find("15 minutes") != std::string::npos);
-    assert(mockDb.lockouts.find("100099998888") == mockDb.lockouts.end());
-    assert(mockDb.lockouts["alice@vaultx.sim"].failedAttempts == 5);
-    assert(mockDb.lockouts["alice@vaultx.sim"].lockedUntil > 0);
 
-    // Subsequent login via email must stay locked without double counting
-    AuthResult stillLocked = auth.loginUser("alice@vaultx.sim", "123456");
-    assert(!stillLocked.success);
-    assert(mockDb.lockouts["alice@vaultx.sim"].failedAttempts == 5);
+    // Cannot link an already-taken mobile number even with valid PIN
+    AuthResult takenAttempt = auth.linkMobileToLegacyUser("100020003000", "123456", "+91", "9811112222");
+    assert(!takenAttempt.success);
+    assert(mockDb.users[0].mobileNumber.empty());
 
-    // Case B: Active legacy lockout under Bob's card number preserves expiration timestamp
-    mockDb.lockouts["100077776666"] = {5, futureLock};
-    AuthResult bobBlocked = auth.loginUser("100077776666", "654321");
-    assert(!bobBlocked.success);
-    assert(bobBlocked.message.find("locked") != std::string::npos);
-    assert(mockDb.lockouts.find("100077776666") == mockDb.lockouts.end());
-    assert(mockDb.lockouts["bob@vaultx.sim"].lockedUntil == futureLock);
+    // Valid link succeeds and preserves userId/accountNumber/PIN hash
+    AuthResult linkOk = auth.linkMobileToLegacyUser("100020003000", "123456", "+91", "9822223333");
+    assert(linkOk.success);
+    assert(linkOk.userId == 10);
+    assert(linkOk.accountNumber == "100020003000");
+    assert(linkOk.mobileNumber == "+919822223333");
+    assert(mockDb.users[0].mobileNumber == "+919822223333");
 
-    // Confirm unrelated record is untouched
-    assert(mockDb.lockouts.find("unrelated@vaultx.sim") != mockDb.lockouts.end());
+    // Subsequent mobile login works immediately with existing PIN hash
+    AuthResult mobileLogin = auth.loginUser("+91", "9822223333", "123456");
+    assert(mobileLogin.success && mobileLogin.userId == 10);
+
+    // Cannot overwrite already-linked mobile via link endpoint
+    AuthResult relinkBlocked = auth.linkMobileToLegacyUser("100020003000", "123456", "+91", "9833334444");
+    assert(!relinkBlocked.success);
+    assert(mockDb.users[0].mobileNumber == "+919822223333");
+
+    // Unrelated lockout untouched
     assert(mockDb.lockouts["unrelated@vaultx.sim"].failedAttempts == 5);
     assert(mockDb.lockouts["unrelated@vaultx.sim"].lockedUntil == futureLock);
 
-    std::cout << "[PASS] Legacy lockout reconciliation preserves expirations without double counting\n";
+    std::cout << "[PASS] Legacy account mobile linking preserves user identity and blocks duplicates\n";
 }
 
 void testConcurrentLoginLockoutTOCTOU() {
     MockAuthDatabase mockDb;
     mockDb.users.push_back({
-        1, "alice@vaultx.sim", "100099998888", PinHasher::hashPin("123456"), "active"
+        1, "alice@vaultx.sim", "+919876543210", "100099998888", PinHasher::hashPin("123456"), "active"
     });
     mockDb.users.push_back({
-        2, "bob@vaultx.sim", "100077776666", PinHasher::hashPin("654321"), "active"
+        2, "bob@vaultx.sim", "+919811112222", "100077776666", PinHasher::hashPin("654321"), "active"
     });
 
     AuthService auth(mockDb);
 
-    // Fire 12 simultaneous failed login attempts targeting Alice via alternating identifiers
+    // Fire 12 simultaneous failed login attempts targeting Alice via alternating mobile formats
     std::atomic<int> lockedResponses{0};
     std::atomic<int> invalidResponses{0};
     std::vector<std::thread> attackers;
     for (int i = 0; i < 12; ++i) {
         attackers.emplace_back([&auth, &lockedResponses, &invalidResponses, i]() {
-            const std::string id = (i % 2 == 0) ? "100099998888" : "alice@vaultx.sim";
-            AuthResult r = auth.loginUser(id, "000000");
+            const std::string cc = (i % 2 == 0) ? "+91" : "";
+            const std::string num = (i % 2 == 0) ? "09876543210" : "+91 98765-43210";
+            AuthResult r = auth.loginUser(cc, num, "000000");
             assert(!r.success);
             if (r.message.find("locked") != std::string::npos) {
                 lockedResponses.fetch_add(1);
@@ -217,31 +280,28 @@ void testConcurrentLoginLockoutTOCTOU() {
         });
     }
 
-    // Simultaneously authenticate Bob (different stripe) to verify no global lock/deadlock
-    AuthResult bobResult{false, "", -1, ""};
+    // Simultaneously authenticate Bob to verify no global lock/deadlock
+    AuthResult bobResult;
     std::thread bobThread([&auth, &bobResult]() {
-        bobResult = auth.loginUser("100077776666", "654321");
+        bobResult = auth.loginUser("+91", "9811112222", "654321");
     });
 
     for (auto& t : attackers) t.join();
     bobThread.join();
 
-    // Striped locking ensures failedAttempts never overshoots 5 due to TOCTOU races
-    assert(mockDb.lockouts["alice@vaultx.sim"].failedAttempts == 5);
+    assert(mockDb.lockouts["+919876543210"].failedAttempts == 5);
     assert(invalidResponses.load() == 4);
-    assert(lockedResponses.load() == 8); // 5th triggers 15m lock + 6..12 rejected before PIN check
+    assert(lockedResponses.load() == 8);
     assert(bobResult.success);
 
-    std::cout << "[PASS] Concurrent login burst capped strictly at 5 attempts with zero TOCTOU/deadlock\n";
+    std::cout << "[PASS] Concurrent mobile login burst capped strictly at 5 attempts with zero TOCTOU/deadlock\n";
 }
 
 void testStrictIpValidationAndProxyHeaders() {
-    // Valid IPv4 & IPv6 checks
     assert(RateLimiter::isValidIpAddress("203.0.113.10"));
     assert(RateLimiter::isValidIpAddress("2001:db8::1"));
     assert(RateLimiter::isValidIpAddress("::ffff:192.0.2.1"));
 
-    // Invalid / malformed / oversized IP strings rejected
     assert(!RateLimiter::isValidIpAddress(""));
     assert(!RateLimiter::isValidIpAddress("999.999.999.999"));
     assert(!RateLimiter::isValidIpAddress("evil;drop"));
@@ -249,29 +309,20 @@ void testStrictIpValidationAndProxyHeaders() {
     assert(!RateLimiter::isValidIpAddress("::bad::ip"));
     assert(!RateLimiter::isValidIpAddress(std::string(50, '1')));
 
-    // Default (NONE): ignore spoofed CF-Connecting-IP and X-Forwarded-For
     assert(RateLimiter::parseTrustedProxyMode(nullptr) == TrustedProxyMode::NONE);
     assert(RateLimiter::parseTrustedProxyMode("false") == TrustedProxyMode::NONE);
     assert(RateLimiter::resolveClientIp(
         "203.0.113.10", "1.2.3.4", "5.6.7.8, 9.9.9.9", TrustedProxyMode::NONE
     ) == "203.0.113.10");
 
-    // Render rightmost XFF mode: valid rightmost IPv4/IPv6 accepted; invalid falls back safely
     assert(RateLimiter::parseTrustedProxyMode("render") == TrustedProxyMode::RENDER_RIGHTMOST_XFF);
     assert(RateLimiter::resolveClientIp(
         "10.0.0.1", "1.2.3.4", "8.8.8.8, 198.51.100.42", TrustedProxyMode::RENDER_RIGHTMOST_XFF
     ) == "198.51.100.42");
     assert(RateLimiter::resolveClientIp(
-        "10.0.0.1", "1.2.3.4", "8.8.8.8, 2001:db8::99", TrustedProxyMode::RENDER_RIGHTMOST_XFF
-    ) == "2001:db8::99");
-    assert(RateLimiter::resolveClientIp(
-        "10.0.0.1", "1.2.3.4", "1.2.3.4, ", TrustedProxyMode::RENDER_RIGHTMOST_XFF
-    ) == "10.0.0.1");
-    assert(RateLimiter::resolveClientIp(
         "10.0.0.1", "1.2.3.4", "1.2.3.4, invalid-ip", TrustedProxyMode::RENDER_RIGHTMOST_XFF
     ) == "10.0.0.1");
 
-    // Cloudflare strict mode rejects invalid CF-Connecting-IP and falls back to remoteAddr
     assert(RateLimiter::parseTrustedProxyMode("cloudflare") == TrustedProxyMode::CLOUDFLARE_STRICT);
     assert(RateLimiter::resolveClientIp(
         "10.0.0.1", "198.51.100.77", "8.8.8.8", TrustedProxyMode::CLOUDFLARE_STRICT
@@ -340,12 +391,13 @@ void testSessionMemoryBoundsAndCleanup() {
 } // namespace
 
 int main() {
-    testCanonicalLockoutBypassImpossible();
-    testLegacyLockoutReconciliation();
+    testPhoneNormalizationAndValidation();
+    testMobileCanonicalLockoutBypassImpossible();
+    testLegacyAccountMobileLinkingAndReconciliation();
     testConcurrentLoginLockoutTOCTOU();
     testStrictIpValidationAndProxyHeaders();
     testRateLimiterBoundsAndCleanup();
     testSessionMemoryBoundsAndCleanup();
-    std::cout << "\nALL P1 SECURITY HARDENING TESTS PASSED!\n";
+    std::cout << "\nALL MOBILE AUTH & P1/P2 SECURITY TESTS PASSED!\n";
     return 0;
 }

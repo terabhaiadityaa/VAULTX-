@@ -29,6 +29,8 @@ struct AccountDetails {
     std::int64_t accountId = 0;
     std::string fullName;
     std::string email;
+    std::string mobileNumber;
+    bool mobileVerified = false;
     std::string accountNumber;
     std::int64_t balancePaise = 0;
     std::string status;
@@ -48,6 +50,7 @@ struct TransactionItem {
 struct RegistrationResult {
     bool success = false;
     bool duplicateEmail = false;
+    bool duplicateMobile = false;
     bool duplicateAccount = false;
     std::string message;
     int userId = -1;
@@ -57,7 +60,15 @@ struct UserAuthRecord {
     bool found = false;
     int userId = -1;
     std::string email;
+    std::string mobileNumber;
     std::string pinHash;
+};
+
+struct LinkMobileResult {
+    bool success = false;
+    bool alreadyLinked = false;
+    bool mobileTaken = false;
+    std::string message;
 };
 
 struct AccountLoginStatus {
@@ -103,6 +114,7 @@ public:
     RegistrationResult createCardAccount(
         const std::string& fullName,
         const std::string& email,
+        const std::string& mobileNumber,
         const std::string& pinHash,
         const std::string& accountNumber,
         std::int64_t initialBalancePaise,
@@ -114,7 +126,7 @@ public:
     virtual void clearLoginAttempts(const std::string& identifier);
     virtual void reconcileLegacyLoginAttempts(
         const std::string& legacyIdentifier,
-        const std::string& canonicalEmail
+        const std::string& canonicalIdentifier
     );
     virtual bool recordFailedLoginAttempt(
         const std::string& identifier,
@@ -122,7 +134,9 @@ public:
         std::int64_t lockUntilEpoch,
         std::int64_t currentEpoch
     );
-    virtual UserAuthRecord findUserForLogin(const std::string& identifier);
+    virtual UserAuthRecord findUserForLogin(const std::string& canonicalMobile);
+    virtual UserAuthRecord findLegacyUserForLinking(const std::string& legacyIdentifier);
+    virtual LinkMobileResult linkMobileNumberToUser(int userId, const std::string& canonicalMobile);
     virtual AccountLoginStatus findAccountForUser(int userId);
 
     // Returns the active account number belonging to this authenticated user.

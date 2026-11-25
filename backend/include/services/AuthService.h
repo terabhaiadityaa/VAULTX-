@@ -9,10 +9,12 @@
 #include "database/Database.h"
 
 struct AuthResult {
-    bool success;
+    bool success = false;
+    bool invalidInput = false;
     std::string message;
-    int userId;
+    int userId = -1;
     std::string accountNumber;
+    std::string mobileNumber;
 };
 
 class AuthService {
@@ -34,13 +36,25 @@ public:
 
     AuthResult registerUser(
         const std::string& fullName,
+        const std::string& countryCode,
+        const std::string& mobileNumber,
         const std::string& email,
-        const std::string& pin
+        const std::string& pin,
+        const std::string& confirmPin = "",
+        bool enforceConfirmPin = false
     );
 
     AuthResult loginUser(
-        const std::string& email,
+        const std::string& countryCode,
+        const std::string& mobileNumber,
         const std::string& pin
+    );
+
+    AuthResult linkMobileToLegacyUser(
+        const std::string& accountOrEmail,
+        const std::string& pin,
+        const std::string& countryCode,
+        const std::string& mobileNumber
     );
 };
 
